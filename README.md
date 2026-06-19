@@ -24,6 +24,7 @@ Longer term, this repo is intended to become an experimental kernel lab for MLX 
 - Decode Attention: single-token attention over KV cache tensors.
 - Layout and fused helpers: QKV split, split+RoPE, cache-update fusion, residual add, and RMSNorm+residual.
 - Quantization: q4/q8 dequantization and correctness-first decode matvec kernels.
+- Paged KV-cache: paged cache allocation, updates, and paged decode attention scaffolds.
 - Future: paged KV, quantized matvec, and tiled attention kernels.
 
 ## Project Goal
@@ -116,6 +117,9 @@ python benchmarks/bench_fused_qkv_rope_cache.py --B 2 --MAX_S 128 --H 8 --D 64 -
 python benchmarks/bench_residual_norm.py --B 2 --S 16 --D 1024 --dtype float16 --backend all
 python benchmarks/bench_dequant.py --bits 4 --M 4096 --K 4096 --dtype float16 --backend all
 python benchmarks/bench_quant_matvec_decode.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
+python benchmarks/bench_paged_kv_cache_update.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/bench_paged_decode_attention.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
+python benchmarks/bench_paged_decode_loop.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --T 32 --H 8 --D 64 --dtype float16 --backend all
 ```
 
 ## Benchmark
@@ -149,6 +153,7 @@ from ops.fused_ops import fused_decode_step_from_qkv, qkv_rope_cache_update, res
 from ops.kv_cache_ops import kv_cache_update
 from ops.layout_ops import qkv_split, qkv_split_rope
 from ops.norm_ops import rms_norm
+from ops.paged_kv_ops import allocate_paged_kv_cache, paged_decode_attention, paged_decode_step, paged_kv_cache_update
 from ops.quant_ops import dequant_q4, dequant_q8, pack_q4, q4_matvec_decode, q8_matvec_decode
 from ops.rope_ops import apply_rope
 
@@ -201,6 +206,12 @@ y_q4 = q4_matvec_decode(mx.random.normal((1, 64)).astype(mx.float16), packed_w, 
 
 q8_vals = (mx.random.uniform((32, 64)) * 255).astype(mx.uint8)
 y_q8 = q8_matvec_decode(mx.random.normal((1, 64)).astype(mx.float16), q8_vals, scales, group_size=32, backend="auto")
+
+PAGE_SIZE = 4
+K_pages, V_pages, block_table = allocate_paged_kv_cache(1, MAX_S, 8, 64, PAGE_SIZE, dtype=mx.float16)
+K_pages, V_pages = paged_kv_cache_update(K_pages, V_pages, k_new, v_new, block_table, 0)
+out_paged = paged_decode_attention(q, K_pages, V_pages, block_table, lengths=1, backend="auto")
+out_step, K_pages, V_pages = paged_decode_step(q, k_new, v_new, K_pages, V_pages, block_table, 1, backend="auto")
 ```
 
 ## Transformer Primitive Benchmarks
@@ -217,6 +228,9 @@ python benchmarks/bench_fused_qkv_rope_cache.py --B 2 --MAX_S 128 --H 8 --D 64 -
 python benchmarks/bench_residual_norm.py --B 2 --S 16 --D 1024 --dtype float16 --backend all
 python benchmarks/bench_dequant.py --bits 4 --M 4096 --K 4096 --dtype float16 --backend all
 python benchmarks/bench_quant_matvec_decode.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
+python benchmarks/bench_paged_kv_cache_update.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/bench_paged_decode_attention.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
+python benchmarks/bench_paged_decode_loop.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --T 32 --H 8 --D 64 --dtype float16 --backend all
 ```
 
 ## Roadmap

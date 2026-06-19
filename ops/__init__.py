@@ -13,6 +13,18 @@ from .fused_ops import (
 from .kv_cache_ops import kv_cache_update, reference_kv_cache_update
 from .layout_ops import qkv_split, qkv_split_rope, reference_qkv_split, reference_qkv_split_rope
 from .norm_ops import reference_rms_norm, rms_norm
+from .paged_kv_ops import (
+    allocate_paged_kv_cache,
+    block_table_lookup,
+    make_identity_block_table,
+    paged_decode_attention,
+    paged_decode_step,
+    paged_kv_cache_update,
+    reference_block_table_lookup,
+    reference_paged_decode_attention,
+    reference_paged_decode_step,
+    reference_paged_kv_cache_update,
+)
 from .quant_ops import (
     dequant_q4,
     dequant_q8,
@@ -38,6 +50,10 @@ __all__ = [
     "reference_decode_attention",
     "reference_decode_step",
     "reference_kv_cache_update",
+    "reference_block_table_lookup",
+    "reference_paged_decode_attention",
+    "reference_paged_decode_step",
+    "reference_paged_kv_cache_update",
     "reference_qkv_rope_cache_update",
     "reference_qkv_split",
     "reference_qkv_split_rope",
@@ -49,11 +65,17 @@ __all__ = [
     "reference_rms_norm",
     "reference_rmsnorm_residual",
     "reference_swiglu",
+    "allocate_paged_kv_cache",
+    "block_table_lookup",
     "dequant_q4",
     "dequant_q8",
     "fused_decode_step_from_qkv",
     "groupwise_dequant",
     "kv_cache_update",
+    "make_identity_block_table",
+    "paged_decode_attention",
+    "paged_decode_step",
+    "paged_kv_cache_update",
     "pack_q4",
     "q4_matvec_decode",
     "q8_matvec_decode",

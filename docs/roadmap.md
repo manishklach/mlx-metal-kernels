@@ -15,7 +15,7 @@
 3. v0.3 KV-cache update + optimized decode attention
 4. v0.4 Layout + fused transformer block helpers
 5. v0.5 Quantization + decode matvec kernels
-6. v0.6 paged KV cache
+6. v0.6 Paged KV-cache + paged decode attention
 7. v0.7 fused decode block
 8. v0.8 shape-specialized attention
 9. v0.9 optimized q4/q8 matvec reductions
@@ -47,7 +47,7 @@
 - Add correctness-first decode matvec kernels that dequantize on the fly.
 - Keep the first implementation simple and reference-validated.
 
-## v0.6: Paged KV cache
+## v0.6: Paged KV-cache + paged decode attention
 
 - Add paged cache metadata and update paths.
 - Introduce block-table aware decode helpers.
