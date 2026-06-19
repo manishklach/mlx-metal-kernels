@@ -23,6 +23,7 @@ Longer term, this repo is intended to become an experimental kernel lab for MLX 
 - KV-cache update: correctness-first cache write path for single-token K/V updates.
 - Decode Attention: single-token attention over KV cache tensors.
 - Layout and fused helpers: QKV split, split+RoPE, cache-update fusion, residual add, and RMSNorm+residual.
+- Quantization: q4/q8 dequantization and correctness-first decode matvec kernels.
 - Future: paged KV, quantized matvec, and tiled attention kernels.
 
 ## Project Goal
@@ -113,6 +114,8 @@ python benchmarks/bench_decode_loop.py --B 2 --MAX_S 64 --T 16 --H 8 --D 64 --dt
 python benchmarks/bench_qkv_split.py --B 2 --S 16 --H 8 --D 64 --dtype float16 --backend all
 python benchmarks/bench_fused_qkv_rope_cache.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend all
 python benchmarks/bench_residual_norm.py --B 2 --S 16 --D 1024 --dtype float16 --backend all
+python benchmarks/bench_dequant.py --bits 4 --M 4096 --K 4096 --dtype float16 --backend all
+python benchmarks/bench_quant_matvec_decode.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
 ```
 
 ## Benchmark
@@ -146,6 +149,7 @@ from ops.fused_ops import fused_decode_step_from_qkv, qkv_rope_cache_update, res
 from ops.kv_cache_ops import kv_cache_update
 from ops.layout_ops import qkv_split, qkv_split_rope
 from ops.norm_ops import rms_norm
+from ops.quant_ops import dequant_q4, dequant_q8, pack_q4, q4_matvec_decode, q8_matvec_decode
 from ops.rope_ops import apply_rope
 
 Q = mx.random.normal((1, 128, 8, 64)).astype(mx.float16)
@@ -188,6 +192,15 @@ q_only, K_cache, V_cache = qkv_rope_cache_update(packed_qkv, K_cache, V_cache, c
 y_add = residual_add(x[:, :1, :64], x[:, :1, :64], backend="auto")
 y_norm_res, z_res = rmsnorm_residual(x, x, weight, return_residual=True, backend="auto")
 out_fused, K_cache, V_cache = fused_decode_step_from_qkv(packed_qkv, K_cache, V_cache, cos, sin, 3, H=8, D=64, backend="auto")
+
+q4_vals = (mx.random.uniform((32, 64)) * 16).astype(mx.uint8)
+packed_w = pack_q4(q4_vals)
+scales = mx.ones((32, 2), dtype=mx.float32)
+W_deq = dequant_q4(packed_w, scales, group_size=32, backend="auto")
+y_q4 = q4_matvec_decode(mx.random.normal((1, 64)).astype(mx.float16), packed_w, scales, group_size=32, backend="auto")
+
+q8_vals = (mx.random.uniform((32, 64)) * 255).astype(mx.uint8)
+y_q8 = q8_matvec_decode(mx.random.normal((1, 64)).astype(mx.float16), q8_vals, scales, group_size=32, backend="auto")
 ```
 
 ## Transformer Primitive Benchmarks
@@ -202,6 +215,8 @@ python benchmarks/bench_decode_loop.py --B 2 --MAX_S 64 --T 16 --H 8 --D 64 --dt
 python benchmarks/bench_qkv_split.py --B 2 --S 16 --H 8 --D 64 --dtype float16 --backend all
 python benchmarks/bench_fused_qkv_rope_cache.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend all
 python benchmarks/bench_residual_norm.py --B 2 --S 16 --D 1024 --dtype float16 --backend all
+python benchmarks/bench_dequant.py --bits 4 --M 4096 --K 4096 --dtype float16 --backend all
+python benchmarks/bench_quant_matvec_decode.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
 ```
 
 ## Roadmap

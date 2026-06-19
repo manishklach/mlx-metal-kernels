@@ -14,11 +14,12 @@
 2. v0.2 transformer primitives: RMSNorm, RoPE, SwiGLU, decode scaffold
 3. v0.3 KV-cache update + optimized decode attention
 4. v0.4 Layout + fused transformer block helpers
-5. v0.5 paged KV cache
-6. v0.6 quant/dequant kernels
+5. v0.5 Quantization + decode matvec kernels
+6. v0.6 paged KV cache
 7. v0.7 fused decode block
 8. v0.8 shape-specialized attention
-9. v1.0 stable experimental kernel suite
+9. v0.9 optimized q4/q8 matvec reductions
+10. v1.0 stable experimental kernel suite
 
 ## v0.2: Transformer primitives
 
@@ -40,15 +41,16 @@
 - Add residual add and RMSNorm+residual helpers.
 - Keep the fused decode helper as composition, not a monolithic fused block yet.
 
-## v0.5: Paged KV cache
+## v0.5: Quantization + decode matvec kernels
+
+- Add q4 and q8 dequantization helpers.
+- Add correctness-first decode matvec kernels that dequantize on the fly.
+- Keep the first implementation simple and reference-validated.
+
+## v0.6: Paged KV cache
 
 - Add paged cache metadata and update paths.
 - Introduce block-table aware decode helpers.
-
-## v0.6: Quant / dequant kernels
-
-- Add q4 dequantization helpers.
-- Add quantized decode matvec building blocks.
 
 ## v0.7: Fused decode block
 
@@ -57,6 +59,11 @@
 ## v0.8: Shape-specialized attention
 
 - Add D=64 / D=128 specialized attention kernels.
+
+## v0.9: Optimized q4/q8 matvec reductions
+
+- Parallelize reductions over K.
+- Explore tiled and groupwise decode matvec paths.
 
 ## Historical notes
 
