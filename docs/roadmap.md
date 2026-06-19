@@ -13,11 +13,12 @@
 1. v0.1 attention baseline
 2. v0.2 transformer primitives: RMSNorm, RoPE, SwiGLU, decode scaffold
 3. v0.3 KV-cache update + optimized decode attention
-4. v0.4 row-parallel / tiled attention
+4. v0.4 Layout + fused transformer block helpers
 5. v0.5 paged KV cache
-6. v0.6 quantized decode matvec
+6. v0.6 quant/dequant kernels
 7. v0.7 fused decode block
-8. v1.0 stable experimental kernel suite
+8. v0.8 shape-specialized attention
+9. v1.0 stable experimental kernel suite
 
 ## v0.2: Transformer primitives
 
@@ -32,7 +33,36 @@
 - Add `decode_step` helper that composes cache update plus decode.
 - Keep the path correctness-first and explicit about backend status.
 
-## v0.4: Row-parallel streaming kernel
+## v0.4: Layout + fused transformer block helpers
+
+- Add packed and explicit QKV layout split helpers.
+- Add split+RoPE and split+RoPE+cache-update helpers for decode composition.
+- Add residual add and RMSNorm+residual helpers.
+- Keep the fused decode helper as composition, not a monolithic fused block yet.
+
+## v0.5: Paged KV cache
+
+- Add paged cache metadata and update paths.
+- Introduce block-table aware decode helpers.
+
+## v0.6: Quant / dequant kernels
+
+- Add q4 dequantization helpers.
+- Add quantized decode matvec building blocks.
+
+## v0.7: Fused decode block
+
+- Fuse qkv split/rope/cache update with decode attention where practical.
+
+## v0.8: Shape-specialized attention
+
+- Add D=64 / D=128 specialized attention kernels.
+
+## Historical notes
+
+The items below remain important background for the attention kernel family.
+
+## Row-parallel streaming kernel
 
 The v0.1 kernel assigns one Metal thread to one query row. This is simple but
 leaves too much parallelism unused. The next step is to split one query row
@@ -44,7 +74,7 @@ across a threadgroup:
 - threadgroup reduction for denominator
 - split output accumulation across `D`
 
-## v0.5: Tiled K/V
+## Tiled K/V
 
 - Stage K and/or V tiles into threadgroup memory.
 - Use online softmax tile merge:
@@ -57,14 +87,6 @@ o_new = exp(m_old - m_new) * o_old + exp(scores_tile - m_new) @ V_tile
 
 - Keep `baseline` and `row_parallel` available as separate backends while the
   tiled path matures.
-
-## v0.6: Quantized decode matvec
-
-- Add q4 dequantization helpers and matvec kernels for decode workloads.
-
-## v0.7: Fused decode block
-
-- Fuse cache update, decode attention, and adjacent decode primitives where practical.
 
 ## v1.0: Stable package
 

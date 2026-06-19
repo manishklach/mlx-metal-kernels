@@ -22,6 +22,7 @@ Longer term, this repo is intended to become an experimental kernel lab for MLX 
 - SwiGLU: fused SiLU gate times up-projection activation.
 - KV-cache update: correctness-first cache write path for single-token K/V updates.
 - Decode Attention: single-token attention over KV cache tensors.
+- Layout and fused helpers: QKV split, split+RoPE, cache-update fusion, residual add, and RMSNorm+residual.
 - Future: paged KV, quantized matvec, and tiled attention kernels.
 
 ## Project Goal
@@ -109,6 +110,9 @@ python benchmarks/bench_swiglu.py --B 2 --S 16 --D 256 --dtype float16 --backend
 python benchmarks/bench_kv_cache_update.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend metal
 python benchmarks/bench_decode_attention.py --B 2 --MAX_S 32 --H 8 --D 64 --length 32 --dtype float16 --backend metal
 python benchmarks/bench_decode_loop.py --B 2 --MAX_S 64 --T 16 --H 8 --D 64 --dtype float16 --backend metal
+python benchmarks/bench_qkv_split.py --B 2 --S 16 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/bench_fused_qkv_rope_cache.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/bench_residual_norm.py --B 2 --S 16 --D 1024 --dtype float16 --backend all
 ```
 
 ## Benchmark
@@ -126,6 +130,9 @@ python benchmarks/bench_attention.py --backend reference --matrix --H 8 --dtype 
 python benchmarks/bench_kv_cache_update.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend metal
 python benchmarks/bench_decode_attention.py --B 2 --MAX_S 32 --H 8 --D 64 --length 32 --dtype float16 --backend all
 python benchmarks/bench_decode_loop.py --B 2 --MAX_S 64 --T 16 --H 8 --D 64 --dtype float16 --backend metal
+python benchmarks/bench_qkv_split.py --B 2 --S 16 --H 8 --D 64 --dtype float16 --layout packed --backend all
+python benchmarks/bench_fused_qkv_rope_cache.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/bench_residual_norm.py --B 2 --S 16 --D 1024 --dtype float16 --backend all
 ```
 
 ## API
@@ -135,7 +142,9 @@ import mlx.core as mx
 from ops.activation_ops import swiglu
 from ops.attention_ops import fast_attention
 from ops.decode_ops import decode_attention, decode_step
+from ops.fused_ops import fused_decode_step_from_qkv, qkv_rope_cache_update, residual_add, rmsnorm_residual
 from ops.kv_cache_ops import kv_cache_update
+from ops.layout_ops import qkv_split, qkv_split_rope
 from ops.norm_ops import rms_norm
 from ops.rope_ops import apply_rope
 
@@ -171,6 +180,14 @@ v_new = mx.random.normal((1, 1, 8, 64)).astype(mx.float16)
 K_cache, V_cache = kv_cache_update(K_cache, V_cache, k_new, v_new, 0)
 O_decode = decode_attention(q, K_cache, V_cache, lengths=1, backend="auto")
 O_step, K_cache, V_cache = decode_step(q, k_new, v_new, K_cache, V_cache, 1, backend="auto")
+
+packed_qkv = mx.random.normal((1, 1, 3 * 8 * 64)).astype(mx.float16)
+q_tok, k_tok, v_tok = qkv_split(packed_qkv, H=8, D=64, backend="auto")
+q_rope, k_rope, v_tok = qkv_split_rope(packed_qkv, cos, sin, H=8, D=64, position_offset=0, backend="auto")
+q_only, K_cache, V_cache = qkv_rope_cache_update(packed_qkv, K_cache, V_cache, cos, sin, 2, H=8, D=64, backend="auto")
+y_add = residual_add(x[:, :1, :64], x[:, :1, :64], backend="auto")
+y_norm_res, z_res = rmsnorm_residual(x, x, weight, return_residual=True, backend="auto")
+out_fused, K_cache, V_cache = fused_decode_step_from_qkv(packed_qkv, K_cache, V_cache, cos, sin, 3, H=8, D=64, backend="auto")
 ```
 
 ## Transformer Primitive Benchmarks
@@ -182,6 +199,9 @@ python benchmarks/bench_swiglu.py --B 2 --S 16 --D 256 --dtype float16 --backend
 python benchmarks/bench_kv_cache_update.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend metal
 python benchmarks/bench_decode_attention.py --B 2 --MAX_S 32 --H 8 --D 64 --length 32 --dtype float16 --backend metal
 python benchmarks/bench_decode_loop.py --B 2 --MAX_S 64 --T 16 --H 8 --D 64 --dtype float16 --backend metal
+python benchmarks/bench_qkv_split.py --B 2 --S 16 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/bench_fused_qkv_rope_cache.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/bench_residual_norm.py --B 2 --S 16 --D 1024 --dtype float16 --backend all
 ```
 
 ## Roadmap
