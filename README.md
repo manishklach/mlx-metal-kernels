@@ -20,8 +20,9 @@ Longer term, this repo is intended to become an experimental kernel lab for MLX 
 - RMSNorm: correctness-first row-wise normalization with a pure MLX path and a Metal backend.
 - RoPE: rotary embedding application for transformer attention inputs.
 - SwiGLU: fused SiLU gate times up-projection activation.
+- KV-cache update: correctness-first cache write path for single-token K/V updates.
 - Decode Attention: single-token attention over KV cache tensors.
-- Future: KV-cache update, tiled attention, and quantized matvec kernels.
+- Future: paged KV, quantized matvec, and tiled attention kernels.
 
 ## Project Goal
 
@@ -105,7 +106,9 @@ python benchmarks/bench_attention.py --backend all --S 128 --H 8 --D 64 --dtype 
 python benchmarks/bench_rms_norm.py --B 2 --S 8 --D 1024 --dtype float16 --backend metal
 python benchmarks/bench_rope.py --B 2 --S 16 --H 8 --D 128 --dtype float16 --backend metal
 python benchmarks/bench_swiglu.py --B 2 --S 16 --D 256 --dtype float16 --backend metal
-python benchmarks/bench_decode_attention.py --B 2 --S 32 --H 8 --D 64 --dtype float16 --backend metal
+python benchmarks/bench_kv_cache_update.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend metal
+python benchmarks/bench_decode_attention.py --B 2 --MAX_S 32 --H 8 --D 64 --length 32 --dtype float16 --backend metal
+python benchmarks/bench_decode_loop.py --B 2 --MAX_S 64 --T 16 --H 8 --D 64 --dtype float16 --backend metal
 ```
 
 ## Benchmark
@@ -120,6 +123,9 @@ python benchmarks/bench_attention.py --backend baseline --matrix --H 8 --dtype f
 python benchmarks/bench_attention.py --backend row_parallel --matrix --H 8 --dtype float16
 python benchmarks/bench_attention.py --backend tiled_kv --matrix --H 8 --dtype float16
 python benchmarks/bench_attention.py --backend reference --matrix --H 8 --dtype float16
+python benchmarks/bench_kv_cache_update.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend metal
+python benchmarks/bench_decode_attention.py --B 2 --MAX_S 32 --H 8 --D 64 --length 32 --dtype float16 --backend all
+python benchmarks/bench_decode_loop.py --B 2 --MAX_S 64 --T 16 --H 8 --D 64 --dtype float16 --backend metal
 ```
 
 ## API
@@ -128,7 +134,8 @@ python benchmarks/bench_attention.py --backend reference --matrix --H 8 --dtype 
 import mlx.core as mx
 from ops.activation_ops import swiglu
 from ops.attention_ops import fast_attention
-from ops.decode_ops import decode_attention
+from ops.decode_ops import decode_attention, decode_step
+from ops.kv_cache_ops import kv_cache_update
 from ops.norm_ops import rms_norm
 from ops.rope_ops import apply_rope
 
@@ -153,8 +160,17 @@ gate = mx.random.normal((2, 16, 256)).astype(mx.float16)
 up = mx.random.normal((2, 16, 256)).astype(mx.float16)
 y_swiglu = swiglu(gate, up, backend="auto")
 
+MAX_S = 16
+T = 8
+K_cache = mx.zeros((1, MAX_S, 8, 64), dtype=mx.float16)
+V_cache = mx.zeros((1, MAX_S, 8, 64), dtype=mx.float16)
 q = mx.random.normal((1, 1, 8, 64)).astype(mx.float16)
-O_decode = decode_attention(q, K, V, backend="auto")
+k_new = mx.random.normal((1, 1, 8, 64)).astype(mx.float16)
+v_new = mx.random.normal((1, 1, 8, 64)).astype(mx.float16)
+
+K_cache, V_cache = kv_cache_update(K_cache, V_cache, k_new, v_new, 0)
+O_decode = decode_attention(q, K_cache, V_cache, lengths=1, backend="auto")
+O_step, K_cache, V_cache = decode_step(q, k_new, v_new, K_cache, V_cache, 1, backend="auto")
 ```
 
 ## Transformer Primitive Benchmarks
@@ -163,7 +179,9 @@ O_decode = decode_attention(q, K, V, backend="auto")
 python benchmarks/bench_rms_norm.py --B 2 --S 8 --D 1024 --dtype float16 --backend metal
 python benchmarks/bench_rope.py --B 2 --S 16 --H 8 --D 128 --dtype float16 --backend metal
 python benchmarks/bench_swiglu.py --B 2 --S 16 --D 256 --dtype float16 --backend metal
-python benchmarks/bench_decode_attention.py --B 2 --S 32 --H 8 --D 64 --dtype float16 --backend metal
+python benchmarks/bench_kv_cache_update.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend metal
+python benchmarks/bench_decode_attention.py --B 2 --MAX_S 32 --H 8 --D 64 --length 32 --dtype float16 --backend metal
+python benchmarks/bench_decode_loop.py --B 2 --MAX_S 64 --T 16 --H 8 --D 64 --dtype float16 --backend metal
 ```
 
 ## Roadmap

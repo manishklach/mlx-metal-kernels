@@ -42,5 +42,23 @@
 - Formula: `softmax(q K_cache^T * scale) V_cache`
 - Shapes: `q [B, 1, H, D]`, `K_cache/V_cache [B, S, H, D]`
 - Backend status: `reference`, `metal`
-- Test status: covered by `tests/test_decode_attention.py`
-- Benchmark command: `python benchmarks/bench_decode_attention.py --B 2 --S 32 --H 8 --D 64 --dtype float16 --backend metal`
+- Test status: covered by `tests/test_decode_attention_optimized.py`
+- Benchmark command: `python benchmarks/bench_decode_attention.py --B 2 --MAX_S 32 --H 8 --D 64 --length 32 --dtype float16 --backend metal`
+
+## KV-cache Update
+
+- Purpose: write one new token of K/V state into a flat BSHD cache.
+- Formula: replace `K_cache[b, pos]` and `V_cache[b, pos]` with `k_new[b]` / `v_new[b]`
+- Shapes: `K_cache/V_cache [B, MAX_S, H, D]`, `k_new/v_new [B, 1, H, D]`
+- Backend status: `reference`, `metal`
+- Test status: covered by `tests/test_kv_cache_update.py`
+- Benchmark command: `python benchmarks/bench_kv_cache_update.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend metal`
+
+## Decode Loop
+
+- Purpose: compose cache update plus single-token decode for autoregressive generation.
+- Formula: `kv_cache_update` then `decode_attention(..., lengths=position + 1)`
+- Shapes: token inputs plus caches in BSHD layout
+- Backend status: helper built on `reference` and `metal` backends
+- Test status: covered by `tests/test_decode_loop.py`
+- Benchmark command: `python benchmarks/bench_decode_loop.py --B 2 --MAX_S 64 --T 16 --H 8 --D 64 --dtype float16 --backend metal`
