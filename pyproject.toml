@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mlx-flash-attention-metal"
+version = "0.1.0"
+description = "Experimental FlashAttention-style custom Metal kernels for MLX on Apple Silicon"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["mlx"]
+
+[tool.setuptools]
+packages = ["ops"]
+include-package-data = true
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
