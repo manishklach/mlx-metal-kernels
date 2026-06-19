@@ -10,15 +10,20 @@
 
 ## Preserved optimization roadmap
 
-1. v0.1 baseline streaming kernel
-2. v0.2 row_parallel backend
-3. v0.3 tiled K/V backend
-4. v0.4 specialized `D=64` / `D=128` kernels
-5. v0.5 decode attention
-6. v0.6 paged KV cache
-7. v1.0 stable package
+1. v0.1 attention baseline
+2. v0.2 transformer primitives: RMSNorm, RoPE, SwiGLU, decode scaffold
+3. v0.3 row-parallel and tiled attention
+4. v0.4 KV-cache update and paged KV
+5. v0.5 quant/dequant kernels
+6. v1.0 stable experimental kernel suite
 
-## v0.2: Row-parallel streaming kernel
+## v0.2: Transformer primitives
+
+- Add correctness-first `RMSNorm`, `RoPE`, `SwiGLU`, and `decode_attention`.
+- Give each primitive a pure MLX reference path plus a Metal backend.
+- Add dedicated tests and small benchmark scripts for each primitive.
+
+## v0.3: Row-parallel streaming kernel
 
 The v0.1 kernel assigns one Metal thread to one query row. This is simple but
 leaves too much parallelism unused. The next step is to split one query row
@@ -30,7 +35,7 @@ across a threadgroup:
 - threadgroup reduction for denominator
 - split output accumulation across `D`
 
-## v0.3: Tiled K/V
+## v0.4: Tiled K/V
 
 - Stage K and/or V tiles into threadgroup memory.
 - Use online softmax tile merge:
@@ -44,19 +49,14 @@ o_new = exp(m_old - m_new) * o_old + exp(scores_tile - m_new) @ V_tile
 - Keep `baseline` and `row_parallel` available as separate backends while the
   tiled path matures.
 
-## v0.4: Apple GPU specialization
+## v0.5: Quant / specialization
 
 - Separate D=64 and D=128 kernels.
 - Explore `simdgroup_matrix` for QK and PV sub-blocks.
-- Benchmark on M1/M2/M3/M4 and Pro/Max/Ultra variants.
 
-## v0.5: Decode path
+## v0.6: KV cache and decode path
 
 - Single-token query decode.
-- Reference decode scaffold in Python first.
-
-## v0.6: Paged KV cache
-
 - Paged KV cache support.
 - Optional split-KV merge.
 

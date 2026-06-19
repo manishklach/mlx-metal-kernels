@@ -14,6 +14,15 @@ The first kernel family focuses on fused attention:
 
 Longer term, this repo is intended to become an experimental kernel lab for MLX on Mac, covering attention, decode, KV-cache operations, reductions, normalization, activation functions, quantization/dequantization, and other inference-oriented primitives.
 
+## Kernel Families
+
+- Attention: reference, baseline, row-parallel, and tiled-K/V fused attention backends.
+- RMSNorm: correctness-first row-wise normalization with a pure MLX path and a Metal backend.
+- RoPE: rotary embedding application for transformer attention inputs.
+- SwiGLU: fused SiLU gate times up-projection activation.
+- Decode Attention: single-token attention over KV cache tensors.
+- Future: KV-cache update, tiled attention, and quantized matvec kernels.
+
 ## Project Goal
 
 MLX makes Apple Silicon a serious local machine learning platform, but many high-performance model operations still benefit from custom fused kernels. This project investigates how far MLX custom Metal kernels can be pushed for transformer inference workloads on Mac.
@@ -93,6 +102,10 @@ pip install -e .
 pytest tests -q
 python examples/run_basic.py
 python benchmarks/bench_attention.py --backend all --S 128 --H 8 --D 64 --dtype float16
+python benchmarks/bench_rms_norm.py --B 2 --S 8 --D 1024 --dtype float16 --backend metal
+python benchmarks/bench_rope.py --B 2 --S 16 --H 8 --D 128 --dtype float16 --backend metal
+python benchmarks/bench_swiglu.py --B 2 --S 16 --D 256 --dtype float16 --backend metal
+python benchmarks/bench_decode_attention.py --B 2 --S 32 --H 8 --D 64 --dtype float16 --backend metal
 ```
 
 ## Benchmark
@@ -113,7 +126,11 @@ python benchmarks/bench_attention.py --backend reference --matrix --H 8 --dtype 
 
 ```python
 import mlx.core as mx
-from ops.attention_ops import decode_attention, fast_attention
+from ops.activation_ops import swiglu
+from ops.attention_ops import fast_attention
+from ops.decode_ops import decode_attention
+from ops.norm_ops import rms_norm
+from ops.rope_ops import apply_rope
 
 Q = mx.random.normal((1, 128, 8, 64)).astype(mx.float16)
 K = mx.random.normal((1, 128, 8, 64)).astype(mx.float16)
@@ -123,8 +140,30 @@ O = fast_attention(Q, K, V, causal=True, backend="auto")
 O_exp = fast_attention(Q, K, V, causal=True, backend="row_parallel")
 O_tiled = fast_attention(Q, K, V, causal=True, backend="tiled_kv")
 
+x = mx.random.normal((2, 8, 1024)).astype(mx.float16)
+weight = mx.ones((1024,), dtype=mx.float16)
+y_norm = rms_norm(x, weight, backend="auto")
+
+rope_inp = mx.random.normal((1, 16, 8, 128)).astype(mx.float16)
+cos = mx.random.normal((32, 64)).astype(mx.float32)
+sin = mx.random.normal((32, 64)).astype(mx.float32)
+y_rope = apply_rope(rope_inp, cos, sin, backend="auto")
+
+gate = mx.random.normal((2, 16, 256)).astype(mx.float16)
+up = mx.random.normal((2, 16, 256)).astype(mx.float16)
+y_swiglu = swiglu(gate, up, backend="auto")
+
 q = mx.random.normal((1, 1, 8, 64)).astype(mx.float16)
 O_decode = decode_attention(q, K, V, backend="auto")
+```
+
+## Transformer Primitive Benchmarks
+
+```bash
+python benchmarks/bench_rms_norm.py --B 2 --S 8 --D 1024 --dtype float16 --backend metal
+python benchmarks/bench_rope.py --B 2 --S 16 --H 8 --D 128 --dtype float16 --backend metal
+python benchmarks/bench_swiglu.py --B 2 --S 16 --D 256 --dtype float16 --backend metal
+python benchmarks/bench_decode_attention.py --B 2 --S 32 --H 8 --D 64 --dtype float16 --backend metal
 ```
 
 ## Roadmap
