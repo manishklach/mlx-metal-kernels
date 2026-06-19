@@ -16,10 +16,10 @@
 4. v0.4 Layout + fused transformer block helpers
 5. v0.5 Quantization + decode matvec kernels
 6. v0.6 Paged KV-cache + paged decode attention
-7. v0.7 fused decode block
-8. v0.8 shape-specialized attention
+7. v0.7 Fused decode block
+8. v0.8 shape-specialized attention/decode kernels
 9. v0.9 optimized q4/q8 matvec reductions
-10. v1.0 stable experimental kernel suite
+10. v1.0 benchmark suite across Apple chips
 
 ## v0.2: Transformer primitives
 
@@ -54,11 +54,13 @@
 
 ## v0.7: Fused decode block
 
-- Fuse qkv split/rope/cache update with decode attention where practical.
+- Add composition-first contiguous decode block helpers from projected QKV tokens.
+- Add paged decode block helpers on top of block-table aware cache/update paths.
+- Reuse residual plus RMSNorm block helpers without duplicating the underlying math kernel.
 
-## v0.8: Shape-specialized attention
+## v0.8: Shape-specialized attention/decode kernels
 
-- Add D=64 / D=128 specialized attention kernels.
+- Add D=64 / D=128 specialized attention and decode kernels.
 
 ## v0.9: Optimized q4/q8 matvec reductions
 

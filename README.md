@@ -25,6 +25,7 @@ Longer term, this repo is intended to become an experimental kernel lab for MLX 
 - Layout and fused helpers: QKV split, split+RoPE, cache-update fusion, residual add, and RMSNorm+residual.
 - Quantization: q4/q8 dequantization and correctness-first decode matvec kernels.
 - Paged KV-cache: paged cache allocation, updates, and paged decode attention scaffolds.
+- Fused Decode Block: composition-first contiguous and paged decode helpers from projected QKV tokens.
 - Future: paged KV, quantized matvec, and tiled attention kernels.
 
 ## Project Goal
@@ -120,6 +121,8 @@ python benchmarks/bench_quant_matvec_decode.py --bits 4 --B 1 --K 4096 --N 4096 
 python benchmarks/bench_paged_kv_cache_update.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --dtype float16 --backend all
 python benchmarks/bench_paged_decode_attention.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
 python benchmarks/bench_paged_decode_loop.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --T 32 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/bench_decode_block.py --B 2 --MAX_S 128 --T 32 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/bench_paged_decode_block.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --T 32 --H 8 --D 64 --dtype float16 --backend all
 ```
 
 ## Benchmark
@@ -140,6 +143,8 @@ python benchmarks/bench_decode_loop.py --B 2 --MAX_S 64 --T 16 --H 8 --D 64 --dt
 python benchmarks/bench_qkv_split.py --B 2 --S 16 --H 8 --D 64 --dtype float16 --layout packed --backend all
 python benchmarks/bench_fused_qkv_rope_cache.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend all
 python benchmarks/bench_residual_norm.py --B 2 --S 16 --D 1024 --dtype float16 --backend all
+python benchmarks/bench_decode_block.py --B 2 --MAX_S 128 --T 32 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/bench_paged_decode_block.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --T 32 --H 8 --D 64 --dtype float16 --backend all
 ```
 
 ## API
@@ -149,6 +154,7 @@ import mlx.core as mx
 from ops.activation_ops import swiglu
 from ops.attention_ops import fast_attention
 from ops.decode_ops import decode_attention, decode_step
+from ops.decode_block_ops import decode_block_from_qkv, paged_decode_block_from_qkv
 from ops.fused_ops import fused_decode_step_from_qkv, qkv_rope_cache_update, residual_add, rmsnorm_residual
 from ops.kv_cache_ops import kv_cache_update
 from ops.layout_ops import qkv_split, qkv_split_rope
@@ -212,6 +218,10 @@ K_pages, V_pages, block_table = allocate_paged_kv_cache(1, MAX_S, 8, 64, PAGE_SI
 K_pages, V_pages = paged_kv_cache_update(K_pages, V_pages, k_new, v_new, block_table, 0)
 out_paged = paged_decode_attention(q, K_pages, V_pages, block_table, lengths=1, backend="auto")
 out_step, K_pages, V_pages = paged_decode_step(q, k_new, v_new, K_pages, V_pages, block_table, 1, backend="auto")
+out_block, K_cache, V_cache = decode_block_from_qkv(packed_qkv, K_cache, V_cache, cos, sin, 4, H=8, D=64, backend="auto")
+out_paged_block, K_pages, V_pages = paged_decode_block_from_qkv(
+    packed_qkv, K_pages, V_pages, block_table, cos, sin, 2, H=8, D=64, backend="auto"
+)
 ```
 
 ## Transformer Primitive Benchmarks

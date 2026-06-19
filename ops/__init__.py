@@ -1,6 +1,15 @@
 from .activation_ops import reference_swiglu, swiglu
 from .attention_ops import fast_attention, reference_attention, fast_attention_with_split, optimal_num_splits
 from .decode_ops import decode_attention, decode_step, reference_decode_attention, reference_decode_step
+from .decode_block_ops import (
+    decode_block_from_qkv,
+    decode_block_with_residual_norm,
+    paged_decode_block_from_qkv,
+    reference_decode_block_from_qkv,
+    reference_paged_decode_block_from_qkv,
+    reference_residual_rmsnorm_block,
+    residual_rmsnorm_block,
+)
 from .fused_ops import (
     fused_decode_step_from_qkv,
     qkv_rope_cache_update,
@@ -43,13 +52,18 @@ from .rope_ops import apply_rope, reference_apply_rope
 __all__ = [
     "apply_rope",
     "decode_attention",
+    "decode_block_from_qkv",
+    "decode_block_with_residual_norm",
     "decode_step",
     "fast_attention",
+    "paged_decode_block_from_qkv",
     "reference_attention",
     "reference_apply_rope",
+    "reference_decode_block_from_qkv",
     "reference_decode_attention",
     "reference_decode_step",
     "reference_kv_cache_update",
+    "reference_paged_decode_block_from_qkv",
     "reference_block_table_lookup",
     "reference_paged_decode_attention",
     "reference_paged_decode_step",
@@ -62,6 +76,7 @@ __all__ = [
     "reference_q4_matvec_decode",
     "reference_q8_matvec_decode",
     "reference_residual_add",
+    "reference_residual_rmsnorm_block",
     "reference_rms_norm",
     "reference_rmsnorm_residual",
     "reference_swiglu",
@@ -83,6 +98,7 @@ __all__ = [
     "qkv_split",
     "qkv_split_rope",
     "residual_add",
+    "residual_rmsnorm_block",
     "rms_norm",
     "rmsnorm_residual",
     "swiglu",
