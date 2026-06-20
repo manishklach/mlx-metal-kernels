@@ -11,7 +11,34 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Inspect a quantized checkpoint package JSON.")
     parser.add_argument("package_json", type=str, help="Path to the quantized package JSON.")
     parser.add_argument("--verbose", action="store_true", help="Print full tensor metadata.")
+    parser.add_argument("--tokenizer", type=str, default=None, help="Optional local tokenizer path.")
+    parser.add_argument(
+        "--tokenizer-kind",
+        type=str,
+        default="auto",
+        choices=("auto", "hf-tokenizers", "sentencepiece", "char", "whitespace"),
+        help="Tokenizer loader to use when --validate-alignment is requested.",
+    )
+    parser.add_argument("--validate-alignment", action="store_true", help="Run structured alignment validation.")
+    parser.add_argument("--bits", type=int, default=None, help="Optional expected bits override for alignment validation.")
+    parser.add_argument("--group-size", type=int, default=None, help="Optional expected group_size override for alignment validation.")
     return parser
+
+
+def _load_tokenizer(args):
+    from models.tokenizer_adapters import OptionalDependencyError, TokenizerAdapterFactory
+
+    if args.tokenizer is None and args.tokenizer_kind in ("char", "whitespace"):
+        return TokenizerAdapterFactory.from_file(None, kind=args.tokenizer_kind)
+    if args.tokenizer is None:
+        return None
+    kind = None if args.tokenizer_kind == "auto" else args.tokenizer_kind
+    try:
+        return TokenizerAdapterFactory.from_file(args.tokenizer, kind=kind)
+    except OptionalDependencyError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(f"failed to load tokenizer: {exc}") from exc
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -51,6 +78,46 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\n  Layer {layer_key}:")
             for name, shape in tensors.items():
                 print(f"    {name}: {shape}")
+
+    if args.validate_alignment:
+        from models.alignment import (
+            validate_quantization_alignment,
+            validate_tokenizer_against_package,
+        )
+        from models.tokenizer_adapters import OptionalDependencyError
+
+        tokenizer = None
+        if args.tokenizer is not None or args.tokenizer_kind in ("char", "whitespace"):
+            try:
+                tokenizer = _load_tokenizer(args)
+            except OptionalDependencyError as exc:
+                print(f"Error: optional tokenizer dependency is missing: {exc}", file=sys.stderr)
+                return 1
+            except Exception as exc:  # noqa: BLE001
+                print(f"Error: {exc}", file=sys.stderr)
+                return 1
+
+        reports = [validate_quantization_alignment(package, bits=args.bits, group_size=args.group_size)]
+        if tokenizer is not None:
+            reports.append(validate_tokenizer_against_package(tokenizer, package))
+
+        issues = []
+        for report in reports:
+            issues.extend(report.issues)
+        ok = not any(issue.severity == "error" for issue in issues)
+        merged_summary = {
+            "package": str(pkg_path),
+            "tokenizer": type(tokenizer).__name__ if tokenizer is not None else None,
+            "bits": summary.get("bits"),
+            "group_size": summary.get("group_size"),
+        }
+        from models.alignment import AlignmentReport
+
+        report = AlignmentReport(ok=ok, issues=issues, summary=merged_summary)
+        print("\nAlignment report:")
+        print(report.pretty_print())
+        if not report.ok:
+            return 1
 
     return 0
 

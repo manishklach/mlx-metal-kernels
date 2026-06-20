@@ -175,6 +175,17 @@ class QuantizedCheckpointPackage:
                         f"tensor {tensor.name!r} has invalid role {tensor.role!r}; "
                         f"expected one of {_VALID_ROLES}"
                     )
+                is_unquantized_norm = tensor.role in ("norm", "final_norm")
+                if is_unquantized_norm:
+                    if tensor.bits != 0:
+                        raise ValueError(
+                            f"tensor {tensor.name!r} is unquantized norm metadata and must use bits=0, got {tensor.bits}"
+                        )
+                    if tensor.group_size != 0:
+                        raise ValueError(
+                            f"tensor {tensor.name!r} is unquantized norm metadata and must use group_size=0, got {tensor.group_size}"
+                        )
+                    continue
                 if tensor.bits not in (4, 8):
                     raise ValueError(
                         f"tensor {tensor.name!r} bits must be 4 or 8, got {tensor.bits}"

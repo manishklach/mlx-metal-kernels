@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .alignment import AlignmentReport, validate_generation_alignment
 from .generation import (
     GenerationConfig,
     ToyGenerationState,
@@ -123,9 +124,15 @@ class TinyGenerationPipeline:
         generation_config: GenerationConfig | None = None,
     ):
         self.config = (config or TinyGenerationPipelineConfig()).validate()
+        user_tokenizer = tokenizer
         self.tokenizer = tokenizer or CharTokenizer()
         self.llama_config = self.config.to_llama_config()
-        self.vocab_size = max(int(self.config.vocab_size), int(getattr(self.tokenizer, "vocab_size", self.config.vocab_size)))
+        tokenizer_vocab = int(getattr(self.tokenizer, "vocab_size", self.config.vocab_size))
+        if user_tokenizer is None:
+            self.vocab_size = tokenizer_vocab
+        else:
+            self.vocab_size = max(int(self.config.vocab_size), tokenizer_vocab)
+        self.llama_config.vocab_size = self.vocab_size
         self.generation_config = (generation_config or GenerationConfig()).validate()
         self.generation_config.backend_preset = self.config.backend_preset
         self._prefill_ops = _optional_llama_prefill_ops()
@@ -153,7 +160,19 @@ class TinyGenerationPipeline:
         )
         self._state: ToyGenerationState | None = None
 
+    def validate_alignment(self) -> AlignmentReport:
+        return validate_generation_alignment(
+            tokenizer=self.tokenizer,
+            config=self.llama_config,
+            stack_weights=self.stack_weights,
+            embedding=getattr(self.stack_weights, "embedding", None),
+            lm_head=getattr(self.stack_weights, "lm_head", None),
+            bits=self.config.bits,
+            group_size=self.config.group_size,
+        )
+
     def describe(self) -> dict[str, Any]:
+        alignment = self.validate_alignment()
         return {
             "pipeline": "TinyGenerationPipeline",
             "backend_preset": self.config.backend_preset,
@@ -171,6 +190,8 @@ class TinyGenerationPipeline:
             "vocab_size": self.vocab_size,
             "tokenizer": type(self.tokenizer).__name__,
             "synthetic_weights": True,
+            "alignment_ok": alignment.ok,
+            "alignment_issue_count": len(alignment.issues),
         }
 
     def encode(self, prompt: str) -> list[int]:
@@ -205,8 +226,16 @@ class TinyGenerationPipeline:
             resolved.eos_token_id = getattr(self.tokenizer, "eos_token_id", None)
         return resolved.validate()
 
-    def generate_ids(self, input_ids: list[int], generation_config: GenerationConfig | None = None) -> list[int]:
+    def generate_ids(
+        self,
+        input_ids: list[int],
+        generation_config: GenerationConfig | None = None,
+        *,
+        validate_alignment: bool = True,
+    ) -> list[int]:
         generation_config = (generation_config or self.generation_config).validate()
+        if validate_alignment:
+            self.validate_alignment().raise_for_errors()
         input_ids = [int(token_id) for token_id in input_ids]
         if not self.config.use_prefill:
             return self.model.generate_token_ids(input_ids, generation_config)
@@ -284,6 +313,7 @@ class TinyGenerationPipeline:
         top_k: int | None = None,
         top_p: float | None = None,
         greedy: bool = False,
+        validate_alignment: bool = True,
     ) -> GenerationResult:
         prompt_ids = self.encode(prompt)
         generation_config = self._resolve_generation_config(
@@ -295,7 +325,13 @@ class TinyGenerationPipeline:
             greedy=greedy,
         )
         self.generation_config = generation_config
-        all_ids = self.generate_ids(prompt_ids, generation_config=generation_config)
+        if validate_alignment:
+            self.validate_alignment().raise_for_errors()
+        all_ids = self.generate_ids(
+            prompt_ids,
+            generation_config=generation_config,
+            validate_alignment=False,
+        )
         generated_ids = all_ids[len(prompt_ids):]
         text = self.decode(all_ids)
         metadata = {
@@ -307,6 +343,7 @@ class TinyGenerationPipeline:
             "backend_preset": self.config.backend_preset,
             "use_prefill": self.config.use_prefill,
             "synthetic_weights": True,
+            "alignment_ok": self.validate_alignment().ok,
         }
         return GenerationResult(
             prompt=prompt,

@@ -1,3 +1,13 @@
+from .alignment import (
+    AlignmentIssue,
+    AlignmentReport,
+    tokenizer_alignment_info,
+    validate_config_against_package,
+    validate_generation_alignment,
+    validate_quantization_alignment,
+    validate_tokenizer_against_config,
+    validate_tokenizer_against_package,
+)
 from .checkpoint_adapter import (
     AdapterIssue,
     AdapterReport,
@@ -72,6 +82,14 @@ from .quantized_package_io import (
     package_from_quantized_layers,
 )
 from .sampling import apply_repetition_penalty, greedy_sample, sample_logits, softmax, top_k_filter, top_p_filter
+from .smoke_test import (
+    SmokeTestConfig,
+    SmokeTestIssue,
+    SmokeTestReport,
+    inspect_package_executability,
+    load_optional_local_tokenizer,
+    run_local_smoke_test,
+)
 from .tensor_store import InMemoryTensorStore, ManifestTensorStore, SafeTensorsTensorStore, TensorStore
 from .tiny_generation_pipeline import (
     GenerationResult,
@@ -100,6 +118,8 @@ except ImportError:  # pragma: no cover - allows shape-only helpers without MLX 
     LlamaLikeKernelAdapter = None
 
 __all__ = [
+    "AlignmentIssue",
+    "AlignmentReport",
     "describe_tokenizer",
     "HFTokenizerAdapter",
     "CheckpointConverter",
@@ -161,6 +181,9 @@ __all__ = [
     "resolve_required_tensors",
     "SafeTensorsTensorStore",
     "sample_logits",
+    "SmokeTestConfig",
+    "SmokeTestIssue",
+    "SmokeTestReport",
     "softmax",
     "split_fused_qkv_shape",
     "split_fused_qkv_weight",
@@ -171,6 +194,7 @@ __all__ = [
     "TinyGenerationPipelineConfig",
     "tiny_debug_config",
     "tiny_gqa_debug_config",
+    "tokenizer_alignment_info",
     "TokenizerAdapterFactory",
     "TokenizerInfo",
     "TokenizerProtocol",
@@ -183,8 +207,15 @@ __all__ = [
     "ValidationReport",
     "validate_llama_checkpoint_shapes",
     "validate_llama_layer_shapes",
+    "validate_config_against_package",
+    "validate_generation_alignment",
+    "validate_quantization_alignment",
+    "validate_tokenizer_against_config",
+    "validate_tokenizer_against_package",
     "validate_weight_shapes",
     "WhitespaceTokenizer",
+    "inspect_package_executability",
+    "load_optional_local_tokenizer",
     "adapter_from_in_memory_tensors",
     "adapter_from_manifest_path",
     "build_fused_qkv_manifest_entries",
@@ -192,6 +223,7 @@ __all__ = [
     "build_rope_tables",
     "create_pipeline_from_quantized_package",
     "package_from_quantized_layers",
+    "run_local_smoke_test",
 ]
 
 if KernelBackendConfig is not None:

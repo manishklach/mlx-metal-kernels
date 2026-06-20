@@ -35,10 +35,12 @@ This repo is evolving as an experimental Apple Silicon MLX/Metal kernel lab for 
 - [x] Real tokenizer adapter
 - [x] Full tiny-model generation demo
 - [x] Optimized prefill stack
-- [ ] Tokenizer/checkpoint package alignment
-- [ ] Local real-model smoke test
+- [x] Tokenizer/checkpoint package alignment
+- [x] Local real-model smoke test
 - [ ] Quantized package tensor-data writer
 - [ ] Paged prefill
+- [ ] Chat-template scaffold
+- [ ] Local package tensor-data loader
 
 ## Development pattern
 
@@ -203,11 +205,22 @@ The intended workflow for each new primitive is:
 
 ### v0.33 tokenizer/checkpoint package alignment
 
+- [x] structured alignment reports
+- [x] tokenizer/config/package validation helpers
+- [x] q4/q8 metadata validation
+- [x] tiny pipeline pre-generation alignment checks
+- [x] package inspector alignment mode
 - verify that tokenizer metadata, vocab assumptions, and checkpoint package metadata line up cleanly
 - keep optional tokenizer dependencies and local-file-only behavior explicit
 
 ### v0.34 local real-model smoke test
 
+- [x] structured smoke-test report
+- [x] package executability inspection
+- [x] local tokenizer loading helper
+- [x] dry-run metadata validation path
+- [x] explicit synthetic fallback generation path
+- [x] CLI smoke-test script
 - add a narrow local smoke-test path for a small real checkpoint once tensor loading exists
 - avoid broad quality or performance claims until local verification is repeatable
 
@@ -220,6 +233,16 @@ The intended workflow for each new primitive is:
 
 - extend prefill from contiguous-only cache filling toward paged KV-cache support
 - keep continuation semantics and validation explicit before broadening defaults
+
+### v0.37 chat-template scaffold
+
+- add a minimal local chat-template boundary once tokenizer/package metadata is more stable
+- keep model-specific prompt formatting claims out of scope until local smoke tests exist
+
+### v0.38 local package tensor-data loader
+
+- load repo-native quantized package tensor data into runtime weights when the file format is ready
+- keep metadata-only packages clearly non-executable until this path is implemented
 
 ## Long-term goal
 

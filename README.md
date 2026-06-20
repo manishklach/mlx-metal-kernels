@@ -501,6 +501,63 @@ python benchmarks/bench_tiny_generation_pipeline.py --prompt-len 8 --max-new-tok
 
 The package-based demo is intentionally conservative today. The current quantized package format carries metadata and tensor-layout information, but not the tensor payloads needed for real loading, so the helper raises a clear fallback message and switches to synthetic weights.
 
+## Tokenizer/checkpoint package alignment
+
+The repo includes structured validation for checking whether tokenizer metadata, model config, quantized package metadata, embeddings, `lm_head`, and generation pipeline settings agree before running a generation or smoke path.
+
+Current scope:
+
+- tokenizer vocab and special-token checks
+- config/package shape checks
+- q4/q8 quantization metadata checks
+- embedding and `lm_head` shape checks
+- `TinyGenerationPipeline` alignment validation
+- package inspector alignment mode
+
+Out of scope:
+
+- production tokenizer correctness
+- chat-template validation
+- trained-model quality
+- model downloads
+- full real-model runtime
+
+Commands:
+
+```bash
+python examples/alignment_demo.py
+python scripts/inspect_quantized_package.py /tmp/mlx_quant_package.json --validate-alignment
+```
+
+## Local real-model smoke test scaffold
+
+The repo includes a local-only smoke-test scaffold for checking tokenizer, package metadata, tensor-data availability, alignment validation, and optional synthetic fallback generation.
+
+Current scope:
+
+- dry-run validation of local package JSON
+- optional local tokenizer validation
+- metadata-only package executability check
+- synthetic fallback generation
+- structured smoke-test reports
+- CLI script
+
+Out of scope:
+
+- model downloads
+- production inference
+- real trained checkpoint execution without tensor data
+- automatic Hugging Face loading
+- chat templates
+
+Commands:
+
+```bash
+python scripts/smoke_test_local_model.py --package /tmp/mlx_quant_package.json --dry-run
+python scripts/smoke_test_local_model.py --synthetic-fallback --no-dry-run --prompt "Hello" --max-new-tokens 4
+python examples/local_smoke_test_demo.py
+```
+
 ## Optimized prefill stack
 
 The repo includes a multi-layer prefill path that processes prompt tokens in sequence form, fills one KV-cache per layer, and then continues generation with decode.
