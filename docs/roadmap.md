@@ -29,10 +29,12 @@ This repo is evolving as an experimental Apple Silicon MLX/Metal kernel lab for 
 - [x] GQA/MQA prefill attention
 - [x] Full fused Llama-like decode layer experiment
 - [x] Checkpoint-to-quantized packaging
-- [ ] Tokenizer and sampling demo
-- [ ] Multi-layer decode stack
+- [x] Tokenizer and sampling demo
+- [x] Multi-layer decode stack
 - [ ] Production checkpoint converter
-- [ ] Calibration-aware quantization
+- [ ] Real tokenizer adapter
+- [ ] Full tiny-model generation demo
+- [ ] Optimized prefill stack
 
 ## Development pattern
 
@@ -153,10 +155,20 @@ The intended workflow for each new primitive is:
 - extend the local packaging scaffold into a more practical checkpoint conversion flow
 - keep dependency growth and model-format assumptions explicit
 
-### v0.30 calibration-aware quantization
+### v0.30 real tokenizer adapter
 
-- add validation-friendly hooks for richer quantization workflows
-- keep advanced quantization claims out of scope until they are benchmarked and compared carefully
+- add an optional adapter layer for real tokenizer integration without forcing heavy defaults
+- keep production tokenizer claims out of scope until checkpoint and runtime wiring are more complete
+
+### v0.31 full tiny-model generation demo
+
+- extend the single-layer generation scaffold toward a slightly more complete tiny-model demo
+- keep it explicit that this remains an experimental local-kernel lab, not a production runtime
+
+### v0.32 optimized prefill stack
+
+- extend the stack scaffold with a clearer prefill path on top of the GQA prefill building blocks
+- keep correctness and cache visibility ahead of optimization claims
 
 ## Long-term goal
 

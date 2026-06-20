@@ -52,6 +52,19 @@ from .llama_layer_ops import (
     reference_llama_layer_decode_step,
     tiled_backend_config,
 )
+from .llama_stack_ops import (
+    LlamaStackBackendConfig,
+    LlamaStackCache,
+    LlamaStackWeights,
+    create_random_quantized_llama_stack_weights,
+    embed_token_ids,
+    init_llama_stack_cache,
+    llama_stack_decode_loop,
+    llama_stack_decode_step,
+    logits_from_hidden,
+    reference_llama_stack_decode_loop,
+    reference_llama_stack_decode_step,
+)
 from .mlp_block_ops import (
     quantized_gate_up_projection,
     quantized_linear,
@@ -209,5 +222,16 @@ __all__ = [
     "metal_backend_config",
     "reference_backend_config",
     "reference_llama_layer_decode_step",
+    "LlamaStackBackendConfig",
+    "LlamaStackCache",
+    "LlamaStackWeights",
+    "create_random_quantized_llama_stack_weights",
+    "embed_token_ids",
+    "init_llama_stack_cache",
+    "llama_stack_decode_loop",
+    "llama_stack_decode_step",
+    "logits_from_hidden",
+    "reference_llama_stack_decode_loop",
+    "reference_llama_stack_decode_step",
     "tiled_backend_config",
 ]

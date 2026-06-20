@@ -27,6 +27,7 @@ def test_list_ops_includes_expected_ops():
     assert "quantized_mlp_block" in ops
     assert "gqa_attention" in ops
     assert "llama_layer_decode" in ops
+    assert "llama_stack_decode" in ops
 
 
 def test_get_candidate_backends_and_validate():
@@ -89,3 +90,14 @@ def test_filter_backends_for_shape_llama_layer_decode():
     assert "fused_experimental" in filtered
     filtered_bf16 = module.filter_backends_for_shape("llama_layer_decode", {"bits": 4, "D": 64}, "bfloat16", backends)
     assert "fused_experimental" not in filtered_bf16
+
+
+def test_filter_backends_for_shape_llama_stack_decode():
+    module = _load_module()
+    backends = ["reference", "metal", "tiled", "fused_experimental"]
+    filtered = module.filter_backends_for_shape("llama_stack_decode", {"bits": 4, "cache": "contiguous"}, "float16", backends)
+    assert "fused_experimental" in filtered
+    filtered_bf16 = module.filter_backends_for_shape("llama_stack_decode", {"bits": 4, "cache": "contiguous"}, "bfloat16", backends)
+    assert "fused_experimental" not in filtered_bf16
+    filtered_paged = module.filter_backends_for_shape("llama_stack_decode", {"bits": 4, "cache": "paged"}, "float16", backends)
+    assert filtered_paged == []

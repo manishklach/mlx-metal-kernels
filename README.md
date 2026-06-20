@@ -33,6 +33,7 @@ The repo currently covers several layers of the local LLM inference stack:
 - Llama-like configuration and weight-layout scaffolding
 - GQA/MQA decode support
 - checkpoint-to-quantized packaging scaffold
+- tokenizer and sampling scaffold
 
 ## What this project is not
 
@@ -92,6 +93,7 @@ Performance claims should only be made from benchmark data generated on a specif
 
 - Toy transformer-layer decode benchmark
 - Full Llama-like decode layer experiment
+- Multi-layer decode stack
 - Llama-like config
 - Weight-layout mapping helpers
 - Model-adapter scaffold
@@ -415,6 +417,68 @@ Commands:
 python examples/quantize_layer_demo.py
 python examples/checkpoint_to_quantized_demo.py
 ```
+
+## Multi-layer decode stack
+
+The repo includes a correctness-first multi-layer decode stack scaffold for synthetic Llama-like experiments.
+
+Current scope:
+
+- explicit multi-layer composition over existing single-layer decode blocks
+- one KV-cache per layer
+- final RMSNorm plus optional `lm_head`
+- synthetic stack decode loop
+- synthetic multi-layer generation demo
+- GQA and MHA test coverage
+
+Out of scope:
+
+- production checkpoint execution
+- meaningful text generation from trained weights
+- optimized prefill stack
+- full production multi-layer runtime
+
+Commands:
+
+```bash
+python examples/llama_stack_decode_demo.py
+python examples/toy_multilayer_generation_demo.py
+python benchmarks/bench_llama_stack_decode.py --bits 4 --B 1 --T 16 --num-layers 2 --hidden-size 512 --intermediate-size 2048 --num-heads 8 --num-kv-heads 2 --head-dim 64 --MAX_S 128 --dtype float16 --backend-preset all --validate
+```
+
+This is synthetic random-weight infrastructure for runtime plumbing and cache validation, not production text generation.
+
+## Tokenizer and sampling scaffold
+
+The repo includes a lightweight tokenizer, sampling, and generation scaffold for synthetic single-layer experiments.
+
+Current scope:
+
+- toy character tokenizer
+- toy whitespace tokenizer
+- greedy, top-k, and top-p sampling utilities
+- repetition-penalty helper
+- synthetic single-layer generation loop
+- integration with the Llama-like layer decode scaffold when available
+- synthetic random weights only
+
+Out of scope:
+
+- production tokenizer support
+- BPE or SentencePiece
+- Hugging Face tokenizer loading
+- real text-quality generation
+- full multi-layer runtime
+- model downloads
+
+Commands:
+
+```bash
+python examples/sampling_demo.py
+python examples/toy_generation_demo.py
+```
+
+The toy generation demo uses random synthetic weights and is intended to test plumbing, not language quality.
 
 ## API examples
 

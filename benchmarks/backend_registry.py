@@ -81,6 +81,15 @@ BACKEND_REGISTRY = {
             "fused_experimental",
         ],
     },
+    "llama_stack_decode": {
+        "function": "ops.llama_stack_ops.llama_stack_decode_loop",
+        "reference_backend": "reference",
+        "candidate_backends": [
+            "metal",
+            "tiled",
+            "fused_experimental",
+        ],
+    },
 }
 
 
@@ -165,6 +174,14 @@ def filter_backends_for_shape(op_name: str, shape: dict, dtype, backends) -> lis
             if bits not in (4, 8):
                 continue
             if backend == "fused_experimental" and dtype_name != "float16":
+                continue
+        if op_name == "llama_stack_decode":
+            bits = shape.get("bits")
+            if bits not in (4, 8):
+                continue
+            if backend == "fused_experimental" and dtype_name != "float16":
+                continue
+            if shape.get("cache") == "paged":
                 continue
         if op_name == "gqa_attention":
             hq = shape.get("Hq")
