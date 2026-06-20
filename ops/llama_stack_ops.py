@@ -37,7 +37,7 @@ def _to_numpy(value: Any) -> np.ndarray:
 
 def _cast_like(value: np.ndarray, template: Any):
     if _is_mlx_array(template):
-        return mx.array(value)
+        return mx.array(value, template.dtype)
     return value
 
 

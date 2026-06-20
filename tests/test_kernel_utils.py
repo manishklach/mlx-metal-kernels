@@ -49,4 +49,4 @@ def test_load_metal_source_known_kernel():
     source = load_metal_source(kernel)
     assert isinstance(source, str)
     assert len(source) > 0
-    assert "kernel" in source
+    assert "thread_position_in_threadgroup" in source or "thread_position_in_grid" in source

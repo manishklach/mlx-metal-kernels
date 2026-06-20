@@ -53,5 +53,5 @@ def test_kv_cache_update_only_changes_selected_positions():
     mx.eval(got_K, got_V)
 
     untouched = mx.arange(MAX_S).reshape(1, MAX_S, 1, 1) != positions.reshape(B, 1, 1, 1)
-    assert mx.all(mx.where(untouched, got_K == K_cache, mx.ones_like(got_K, dtype=mx.bool_))).item()
-    assert mx.all(mx.where(untouched, got_V == V_cache, mx.ones_like(got_V, dtype=mx.bool_))).item()
+    assert mx.all(mx.where(untouched, got_K == K_cache, mx.ones(got_K.shape, dtype=mx.bool_))).item()
+    assert mx.all(mx.where(untouched, got_V == V_cache, mx.ones(got_V.shape, dtype=mx.bool_))).item()

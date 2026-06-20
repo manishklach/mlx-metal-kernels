@@ -403,8 +403,10 @@ def gqa_decode_block_from_qkv(
     backend="auto",
 ):
     backend_name = backend.lower()
-    if backend_name not in ("auto", "reference", "metal"):
-        raise ValueError("backend must be one of 'reference', 'metal', 'auto'")
+    if backend_name not in ("auto", "reference", "metal", "metal_gqa", "metal_gqa_threadgroup"):
+        raise ValueError("backend must be one of 'reference', 'metal', 'metal_gqa', 'metal_gqa_threadgroup', 'auto'")
+    if backend_name in ("metal_gqa", "metal_gqa_threadgroup"):
+        backend_name = "metal"
     q_rope, k_rope, v = reference_gqa_qkv_split_rope(
         qkv,
         cos,
@@ -504,8 +506,10 @@ def paged_gqa_decode_block_from_qkv(
     backend="auto",
 ):
     backend_name = backend.lower()
-    if backend_name not in ("auto", "reference", "metal"):
-        raise ValueError("backend must be one of 'reference', 'metal', 'auto'")
+    if backend_name not in ("auto", "reference", "metal", "metal_gqa", "metal_gqa_threadgroup"):
+        raise ValueError("backend must be one of 'reference', 'metal', 'metal_gqa', 'metal_gqa_threadgroup', 'auto'")
+    if backend_name in ("metal_gqa", "metal_gqa_threadgroup"):
+        backend_name = "metal"
     q_rope, k_rope, v = reference_gqa_qkv_split_rope(
         qkv,
         cos,

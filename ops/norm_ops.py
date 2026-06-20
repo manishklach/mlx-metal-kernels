@@ -37,10 +37,10 @@ def _validate_inputs(x: mx.array, weight: mx.array) -> tuple[int, int, int]:
         raise ValueError(f"weight shape must be [D] with D={D}, got {weight.shape}")
     if B <= 0 or S <= 0 or D <= 0:
         raise ValueError(f"Invalid x shape: {x.shape}")
-    if x.dtype not in (mx.float16, mx.bfloat16):
-        raise TypeError(f"x dtype must be float16 or bfloat16, got {x.dtype}")
-    if weight.dtype not in (mx.float16, mx.bfloat16):
-        raise TypeError(f"weight dtype must be float16 or bfloat16, got {weight.dtype}")
+    if x.dtype not in (mx.float16, mx.bfloat16, mx.float32):
+        raise TypeError(f"x dtype must be float16, bfloat16, or float32, got {x.dtype}")
+    if weight.dtype not in (mx.float16, mx.bfloat16, mx.float32):
+        raise TypeError(f"weight dtype must be float16, bfloat16, or float32, got {weight.dtype}")
     return B, S, D
 
 

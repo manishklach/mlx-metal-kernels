@@ -158,11 +158,17 @@ def decode_block_from_qkv(
     if backend_name == "reference":
         return reference_decode_block_from_qkv(qkv, K_cache, V_cache, cos, sin, position, H=H, D=D, scale=scale)
 
+    attn_backend = backend_name
+    cache_backend = backend_name
+    if backend_name in ("metal_gqa_threadgroup", "metal_gqa"):
+        cache_backend = "metal"
+        attn_backend = {"metal_gqa_threadgroup": "metal_threadgroup", "metal_gqa": "metal"}.get(backend_name, backend_name)
+
     q_rope, updated_K, updated_V = qkv_rope_cache_update(
-        qkv, K_cache, V_cache, cos, sin, position, H=H, D=D, backend=backend_name
+        qkv, K_cache, V_cache, cos, sin, position, H=H, D=D, backend=cache_backend
     )
     lengths = _decode_lengths(position, B, max_s)
-    out = decode_attention(q_rope, updated_K, updated_V, lengths=lengths, scale=scale, causal=False, backend=backend_name)
+    out = decode_attention(q_rope, updated_K, updated_V, lengths=lengths, scale=scale, causal=False, backend=attn_backend)
     return out, updated_K, updated_V
 
 
@@ -239,10 +245,12 @@ def paged_decode_block_from_qkv(
             qkv, K_pages, V_pages, block_table, cos, sin, position, H=H, D=D, scale=scale
         )
 
+    cache_backend = "metal" if backend_name in ("metal_gqa_threadgroup", "metal_gqa") else backend_name
+
     q_rope, k_rope, v = _rope_decode_qkv(
-        qkv, cos, sin, position, H=H, D=D, backend=backend_name, reference=False
+        qkv, cos, sin, position, H=H, D=D, backend=cache_backend, reference=False
     )
-    updated_K, updated_V = paged_kv_cache_update(K_pages, V_pages, k_rope, v, block_table, position, backend=backend_name)
+    updated_K, updated_V = paged_kv_cache_update(K_pages, V_pages, k_rope, v, block_table, position, backend=cache_backend)
     lengths = _decode_lengths(position, batch, max_blocks * page_size)
     out = paged_decode_attention(q_rope, updated_K, updated_V, block_table, lengths, scale=scale, backend=backend_name)
     return out, updated_K, updated_V

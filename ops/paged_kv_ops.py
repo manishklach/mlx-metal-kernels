@@ -146,7 +146,8 @@ def reference_block_table_lookup(block_table: mx.array, positions, PAGE_SIZE: in
     offsets = positions_arr % PAGE_SIZE
     page_ids_rows = []
     for b in range(B):
-        page_ids_rows.append(block_table[b:b + 1, block_ids[b]:block_ids[b] + 1])
+        bid = int(block_ids[b])
+        page_ids_rows.append(block_table[b:b + 1, bid:bid + 1])
     page_ids = mx.concatenate(page_ids_rows, axis=0).reshape(B)
     return page_ids.astype(mx.int32), offsets.astype(mx.int32)
 

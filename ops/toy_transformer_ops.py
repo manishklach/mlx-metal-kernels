@@ -540,7 +540,7 @@ def make_toy_layer_weights(
         "ffn_norm_weight": mx.ones((hidden_dim,), dtype=mx.float16),
         "qkv_w": _maybe_pack(_q((qkv_out, hidden_dim))),
         "qkv_scales": mx.random.normal((qkv_out, groups_hidden)).astype(mx.float32),
-        "out_w": _maybe_pack(_q((hidden_dim, hidden_dim))),
+        "out_w": _maybe_pack(_q((hidden_dim, qkv_hidden))),
         "out_scales": mx.random.normal((hidden_dim, groups_hidden)).astype(mx.float32),
         "gate_w": _maybe_pack(_q((intermediate_dim, hidden_dim))),
         "gate_scales": mx.random.normal((intermediate_dim, groups_hidden)).astype(mx.float32),

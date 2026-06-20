@@ -15,14 +15,16 @@ from models.qkv_fusion import (
 
 
 def _manifest_for_config(config):
+    tensors = {}
+    for layer_idx in range(config.num_hidden_layers):
+        prefix = f"model.layers.{layer_idx}.self_attn"
+        tensors[f"{prefix}.q_proj.weight"] = {"shape": [config.q_output_dim(), config.hidden_size], "dtype": "float16"}
+        tensors[f"{prefix}.k_proj.weight"] = {"shape": [config.kv_output_dim(), config.hidden_size], "dtype": "float16"}
+        tensors[f"{prefix}.v_proj.weight"] = {"shape": [config.kv_output_dim(), config.hidden_size], "dtype": "float16"}
     return CheckpointManifest.from_dict(
         {
             "model_type": "llama_like",
-            "tensors": {
-                "model.layers.0.self_attn.q_proj.weight": {"shape": [config.q_output_dim(), config.hidden_size], "dtype": "float16"},
-                "model.layers.0.self_attn.k_proj.weight": {"shape": [config.kv_output_dim(), config.hidden_size], "dtype": "float16"},
-                "model.layers.0.self_attn.v_proj.weight": {"shape": [config.kv_output_dim(), config.hidden_size], "dtype": "float16"},
-            },
+            "tensors": tensors,
         }
     )
 

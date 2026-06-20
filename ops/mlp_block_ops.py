@@ -139,6 +139,11 @@ def quantized_gate_up_projection(
     backend="metal_tiled",
 ):
     _validate_bits(bits)
+    _valid_backends = {"reference", "metal_tiled", "metal_gate_up_tiled"}
+    if backend not in _valid_backends:
+        raise ValueError(
+            "backend must be one of 'reference', 'metal_tiled', 'metal_gate_up_tiled'"
+        )
     if backend == "reference":
         gate = quantized_linear(
             x,
