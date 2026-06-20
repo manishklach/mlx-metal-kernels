@@ -102,6 +102,12 @@
 - Reuse one activation load across a small tile of output channels per threadgroup.
 - Keep the first tiled version simple and reference-validated before performance claims.
 
+## v0.14: End-to-end toy transformer layer decode benchmark
+
+- Add a correctness-first toy single-layer decode composition built from existing repo primitives.
+- Benchmark contiguous and paged decode-layer paths on top of quantized attention and SwiGLU.
+- Keep benchmark validation anchored to the pure reference composition before timing optimized presets.
+
 ## Historical notes
 
 The items below remain important background for the attention kernel family.

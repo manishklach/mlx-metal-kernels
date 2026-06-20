@@ -58,6 +58,12 @@ from .quantized_decode_block_ops import (
     reference_quantized_qkv_projection,
 )
 from .rope_ops import apply_rope, reference_apply_rope
+from .toy_transformer_ops import (
+    paged_toy_transformer_decode_layer,
+    reference_paged_toy_transformer_decode_layer,
+    reference_toy_transformer_decode_layer,
+    toy_transformer_decode_layer,
+)
 
 __all__ = [
     "apply_rope",
@@ -68,6 +74,7 @@ __all__ = [
     "fast_attention",
     "paged_decode_block_from_qkv",
     "paged_quantized_decode_block",
+    "paged_toy_transformer_decode_layer",
     "reference_attention",
     "reference_apply_rope",
     "reference_decode_block_from_qkv",
@@ -76,6 +83,7 @@ __all__ = [
     "reference_kv_cache_update",
     "reference_paged_decode_block_from_qkv",
     "reference_paged_quantized_decode_block",
+    "reference_paged_toy_transformer_decode_layer",
     "reference_block_table_lookup",
     "reference_paged_decode_attention",
     "reference_paged_decode_step",
@@ -95,6 +103,7 @@ __all__ = [
     "reference_rms_norm",
     "reference_rmsnorm_residual",
     "reference_swiglu",
+    "reference_toy_transformer_decode_layer",
     "allocate_paged_kv_cache",
     "block_table_lookup",
     "dequant_q4",
@@ -120,6 +129,7 @@ __all__ = [
     "rms_norm",
     "rmsnorm_residual",
     "swiglu",
+    "toy_transformer_decode_layer",
     "unpack_q4_reference",
     "fast_attention_with_split",
     "optimal_num_splits",

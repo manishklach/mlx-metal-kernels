@@ -19,6 +19,7 @@ from ops.paged_kv_ops import allocate_paged_kv_cache, paged_decode_attention
 from ops.quant_ops import dequant_q4, dequant_q8, pack_q4, q4_matvec_decode, q8_matvec_decode
 from ops.quantized_decode_block_ops import paged_quantized_decode_block, quantized_decode_block
 from ops.rope_ops import apply_rope
+from ops.toy_transformer_ops import make_toy_layer_weights, paged_toy_transformer_decode_layer, toy_transformer_decode_layer
 
 
 def _backend_set(mode: str, stable, experimental):
@@ -287,6 +288,34 @@ def _threadgroup_attention_v2_cases(results, dtype, dtype_name, quick, iters, fa
         _run(results, "threadgroup_attention_v2", "fast_attention", "threadgroup", dtype_name, shape, lambda q=Q, k=K, v=V, c=causal: time_fn(lambda: fast_attention(q, k, v, causal=c, backend="threadgroup"), warmup=3, iters=iters), fail_fast)
 
 
+def _toy_transformer_decode_cases(results, dtype, dtype_name, quick, iters, fail_fast):
+    shapes = (
+        [{"cache": "contiguous", "bits": 4, "B": 1, "K": 256, "H": 4, "D": 64, "INTERMEDIATE": 512, "MAX_S": 32, "PAGE_SIZE": 8, "T": 4}]
+        if quick
+        else [
+            {"cache": "contiguous", "bits": 4, "B": 1, "K": 512, "H": 8, "D": 64, "INTERMEDIATE": 1024, "MAX_S": 64, "PAGE_SIZE": 16, "T": 8},
+            {"cache": "paged", "bits": 4, "B": 1, "K": 512, "H": 8, "D": 64, "INTERMEDIATE": 1024, "MAX_S": 64, "PAGE_SIZE": 16, "T": 8},
+        ]
+    )
+    for shape in shapes:
+        cache = shape["cache"]
+        bits = shape["bits"]
+        B, K, H, D = shape["B"], shape["K"], shape["H"], shape["D"]
+        intermediate = shape["INTERMEDIATE"]
+        MAX_S, PAGE_SIZE, T = shape["MAX_S"], shape["PAGE_SIZE"], shape["T"]
+        weights = make_toy_layer_weights(K, intermediate, bits=bits, group_size=32)
+        cos = mx.random.normal((MAX_S + 4, D // 2)).astype(mx.float32)
+        sin = mx.random.normal((MAX_S + 4, D // 2)).astype(mx.float32)
+        x = mx.random.normal((B, 1, K)).astype(dtype)
+        if cache == "contiguous":
+            K_cache = mx.zeros((B, MAX_S, H, D), dtype=dtype)
+            V_cache = mx.zeros((B, MAX_S, H, D), dtype=dtype)
+            _run(results, "toy_transformer_decode", "toy_transformer_decode_layer", "parallel+metal", dtype_name, shape, lambda xx=x, kk=K_cache, vv=V_cache, ww=weights, cc=cos, ss=sin: time_fn(lambda: toy_transformer_decode_layer(xx, ww["attn_norm_weight"].astype(dtype), ww["ffn_norm_weight"].astype(dtype), ww["qkv_w"], ww["qkv_scales"], ww["out_w"], ww["out_scales"], ww["gate_w"], ww["gate_scales"], ww["up_w"], ww["up_scales"], ww["down_w"], ww["down_scales"], kk, vv, cc, ss, 0, bits=bits, group_size=32, H=H, D=D, matvec_backend="metal_parallel", block_backend="metal"), warmup=3, iters=iters), fail_fast)
+        else:
+            K_pages, V_pages, block_table = allocate_paged_kv_cache(B, MAX_S, H, D, PAGE_SIZE, dtype)
+            _run(results, "toy_transformer_decode", "paged_toy_transformer_decode_layer", "parallel+metal", dtype_name, shape, lambda xx=x, kk=K_pages, vv=V_pages, bt=block_table, ww=weights, cc=cos, ss=sin: time_fn(lambda: paged_toy_transformer_decode_layer(xx, ww["attn_norm_weight"].astype(dtype), ww["ffn_norm_weight"].astype(dtype), ww["qkv_w"], ww["qkv_scales"], ww["out_w"], ww["out_scales"], ww["gate_w"], ww["gate_scales"], ww["up_w"], ww["up_scales"], ww["down_w"], ww["down_scales"], kk, vv, bt, cc, ss, 0, bits=bits, group_size=32, H=H, D=D, matvec_backend="metal_parallel", block_backend="metal"), warmup=3, iters=iters), fail_fast)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick", action="store_true")
@@ -316,6 +345,7 @@ def main():
     _decode_block_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _quantized_decode_block_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _threadgroup_attention_v2_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
+    _toy_transformer_decode_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
 
     payload = {
         "system_info": collect_system_info(),
