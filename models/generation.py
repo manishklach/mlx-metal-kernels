@@ -23,6 +23,11 @@ from .quantize_weights import QuantizationConfig, dequantize_quantized_weight, q
 from .sampling import apply_repetition_penalty, greedy_sample, sample_logits, softmax
 from .tokenization import CharTokenizer
 
+try:
+    from .tokenizer_adapters import load_tokenizer_for_generation
+except ImportError:
+    load_tokenizer_for_generation = None
+
 
 def _is_mlx_array(value: Any) -> bool:
     return mx is not None and type(value).__module__.startswith("mlx")
@@ -328,6 +333,9 @@ class ToyLlamaGenerationModel:
 
     def generate_token_ids(self, input_ids: list[int], generation_config: GenerationConfig):
         generation_config = generation_config.validate()
+        eos_token_id = generation_config.eos_token_id
+        if eos_token_id is None and self.tokenizer is not None:
+            eos_token_id = getattr(self.tokenizer, "eos_token_id", None)
         if not input_ids:
             raise ValueError("input_ids must contain at least one token")
         state = self.init_state(B=1, max_seq_len=max(self.config.max_position_embeddings, len(input_ids) + generation_config.max_new_tokens + 1))
@@ -350,7 +358,7 @@ class ToyLlamaGenerationModel:
                 )
             next_token = int(next_token)
             all_ids.append(next_token)
-            if generation_config.eos_token_id is not None and next_token == generation_config.eos_token_id:
+            if eos_token_id is not None and next_token == eos_token_id:
                 break
             logits, state = self.decode_step(next_token, state, generation_config=generation_config)
         return all_ids
@@ -437,6 +445,9 @@ class ToyLlamaStackGenerationModel:
 
     def generate_token_ids(self, input_ids: list[int], generation_config: GenerationConfig):
         generation_config = generation_config.validate()
+        eos_token_id = generation_config.eos_token_id
+        if eos_token_id is None and self.tokenizer is not None:
+            eos_token_id = getattr(self.tokenizer, "eos_token_id", None)
         if not input_ids:
             raise ValueError("input_ids must contain at least one token")
         state = self.init_state(B=1, max_seq_len=max(self.config.max_position_embeddings, len(input_ids) + generation_config.max_new_tokens + 1))
@@ -461,7 +472,7 @@ class ToyLlamaStackGenerationModel:
                 )
             next_token = int(next_token)
             all_ids.append(next_token)
-            if generation_config.eos_token_id is not None and next_token == generation_config.eos_token_id:
+            if eos_token_id is not None and next_token == eos_token_id:
                 break
             logits, state = self.decode_step(next_token, state, generation_config)
         return all_ids
@@ -511,6 +522,7 @@ def create_synthetic_generation_model(
     *,
     config=None,
     tokenizer=None,
+    tokenizer_path=None,
     vocab_size=128,
     bits=4,
     group_size=32,
@@ -519,7 +531,12 @@ def create_synthetic_generation_model(
     backend_preset="fused_experimental",
 ):
     config = (config or tiny_gqa_debug_config()).validate()
-    tokenizer = tokenizer or CharTokenizer()
+    if tokenizer_path is not None:
+        if load_tokenizer_for_generation is None:
+            raise ImportError("load_tokenizer_for_generation is not available; install optional dependencies or omit tokenizer_path")
+        tokenizer = load_tokenizer_for_generation(path=tokenizer_path)
+    elif tokenizer is None:
+        tokenizer = CharTokenizer()
     vocab_size = max(int(vocab_size), int(getattr(tokenizer, "vocab_size", vocab_size)))
     ops = _optional_llama_ops()
     if ops is not None and mx is not None:
@@ -548,6 +565,7 @@ def create_synthetic_stack_generation_model(
     *,
     config=None,
     tokenizer=None,
+    tokenizer_path=None,
     vocab_size=128,
     bits=4,
     group_size=32,
@@ -556,7 +574,12 @@ def create_synthetic_stack_generation_model(
     backend_preset="fused_experimental",
 ):
     config = (config or tiny_gqa_debug_config()).validate()
-    tokenizer = tokenizer or CharTokenizer()
+    if tokenizer_path is not None:
+        if load_tokenizer_for_generation is None:
+            raise ImportError("load_tokenizer_for_generation is not available; install optional dependencies or omit tokenizer_path")
+        tokenizer = load_tokenizer_for_generation(path=tokenizer_path)
+    elif tokenizer is None:
+        tokenizer = CharTokenizer()
     vocab_size = max(int(vocab_size), int(getattr(tokenizer, "vocab_size", vocab_size)))
     stack_ops = _optional_llama_stack_ops()
     if stack_ops is None:
