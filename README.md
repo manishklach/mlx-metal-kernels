@@ -23,7 +23,7 @@ Longer term, this repo is intended to become an experimental kernel lab for MLX 
 - KV-cache update: correctness-first cache write path for single-token K/V updates.
 - Decode Attention: single-token attention over KV cache tensors.
 - Layout and fused helpers: QKV split, split+RoPE, cache-update fusion, residual add, and RMSNorm+residual.
-- Quantization: q4/q8 dequantization and correctness-first decode matvec kernels.
+- Quantization: q4/q8 dequantization plus correctness-first and parallel decode matvec kernels.
 - Paged KV-cache: paged cache allocation, updates, and paged decode attention scaffolds.
 - Fused Decode Block: composition-first contiguous and paged decode helpers from projected QKV tokens.
 - Shape-specialized kernels: experimental D=64 and D=128 attention/decode backends.
@@ -129,6 +129,8 @@ python benchmarks/bench_paged_decode_block.py --B 2 --MAX_S 128 --PAGE_SIZE 16 -
 python benchmarks/bench_specialized_decode_attention.py --B 2 --MAX_S 128 --H 8 --D 64 --length 128 --dtype float16 --backend all
 python benchmarks/bench_specialized_paged_decode_attention.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
 python benchmarks/bench_specialized_fast_attention.py --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/bench_quant_matvec_parallel.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
+python benchmarks/bench_quant_matvec_parallel.py --bits 8 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
 ```
 
 ## Benchmark
@@ -154,6 +156,8 @@ python benchmarks/bench_paged_decode_block.py --B 2 --MAX_S 128 --PAGE_SIZE 16 -
 python benchmarks/bench_specialized_decode_attention.py --B 2 --MAX_S 128 --H 8 --D 64 --length 128 --dtype float16 --backend all
 python benchmarks/bench_specialized_paged_decode_attention.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
 python benchmarks/bench_specialized_fast_attention.py --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/bench_quant_matvec_parallel.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
+python benchmarks/bench_quant_matvec_parallel.py --bits 8 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
 ```
 
 ## API
@@ -220,9 +224,15 @@ packed_w = pack_q4(q4_vals)
 scales = mx.ones((32, 2), dtype=mx.float32)
 W_deq = dequant_q4(packed_w, scales, group_size=32, backend="auto")
 y_q4 = q4_matvec_decode(mx.random.normal((1, 64)).astype(mx.float16), packed_w, scales, group_size=32, backend="auto")
+y_q4_parallel = q4_matvec_decode(
+    mx.random.normal((1, 64)).astype(mx.float16), packed_w, scales, zeros=None, group_size=32, backend="metal_parallel"
+)
 
 q8_vals = (mx.random.uniform((32, 64)) * 255).astype(mx.uint8)
 y_q8 = q8_matvec_decode(mx.random.normal((1, 64)).astype(mx.float16), q8_vals, scales, group_size=32, backend="auto")
+y_q8_parallel = q8_matvec_decode(
+    mx.random.normal((1, 64)).astype(mx.float16), q8_vals, scales, zeros=None, group_size=32, backend="metal_parallel"
+)
 
 PAGE_SIZE = 4
 K_pages, V_pages, block_table = allocate_paged_kv_cache(1, MAX_S, 8, 64, PAGE_SIZE, dtype=mx.float16)
@@ -250,6 +260,8 @@ python benchmarks/bench_fused_qkv_rope_cache.py --B 2 --MAX_S 128 --H 8 --D 64 -
 python benchmarks/bench_residual_norm.py --B 2 --S 16 --D 1024 --dtype float16 --backend all
 python benchmarks/bench_dequant.py --bits 4 --M 4096 --K 4096 --dtype float16 --backend all
 python benchmarks/bench_quant_matvec_decode.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
+python benchmarks/bench_quant_matvec_parallel.py --bits 4 --B 1 --K 4096 --N 4096 --group-size 32 --dtype float16 --backend all
+python benchmarks/bench_quant_matvec_parallel.py --bits 8 --B 1 --K 4096 --N 4096 --group-size 32 --dtype float16 --backend all
 python benchmarks/bench_paged_kv_cache_update.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --dtype float16 --backend all
 python benchmarks/bench_paged_decode_attention.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
 python benchmarks/bench_paged_decode_loop.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --T 32 --H 8 --D 64 --dtype float16 --backend all

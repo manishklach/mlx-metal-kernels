@@ -18,9 +18,11 @@
 6. v0.6 Paged KV-cache + paged decode attention
 7. v0.7 Fused decode block
 8. v0.8 Shape-specialized attention/decode kernels
-9. v0.9 optimized q4/q8 matvec reductions
-10. v0.10 benchmark suite across Apple chips
-11. v1.0 stable experimental kernel suite
+9. v0.9 Parallel q4/q8 matvec optimization
+10. v0.10 Apple-chip benchmark suite
+11. v0.11 fused quantized decode block
+12. v0.12 SIMD/threadgroup optimized attention v2
+13. v1.0 stable experimental kernel suite
 
 ## v0.2: Transformer primitives
 
@@ -68,7 +70,8 @@
 ## v0.9: Optimized q4/q8 matvec reductions
 
 - Parallelize reductions over K.
-- Explore tiled and groupwise decode matvec paths.
+- Add explicit `metal_parallel` backends for q4 and q8 decode matvec.
+- Keep the original one-thread-per-output-element kernel as the conservative default.
 
 ## Historical notes
 

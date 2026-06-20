@@ -12,7 +12,10 @@ _DEQUANT_Q8_KERNEL = _KERNEL_DIR / "dequant_q8.metal"
 _GROUPWISE_DEQUANT_KERNEL = _KERNEL_DIR / "groupwise_dequant.metal"
 _Q4_MATVEC_KERNEL = _KERNEL_DIR / "q4_matvec_decode.metal"
 _Q8_MATVEC_KERNEL = _KERNEL_DIR / "q8_matvec_decode.metal"
+_Q4_MATVEC_PARALLEL_KERNEL = _KERNEL_DIR / "q4_matvec_decode_parallel.metal"
+_Q8_MATVEC_PARALLEL_KERNEL = _KERNEL_DIR / "q8_matvec_decode_parallel.metal"
 _THREADS = 256
+_MATVEC_PARALLEL_THREADS = 128
 
 
 def _make_header(dtype: mx.Dtype) -> str:
@@ -26,6 +29,7 @@ def _make_header(dtype: mx.Dtype) -> str:
 #include <metal_stdlib>
 using namespace metal;
 #define ELEM_TYPE {elem_type}
+#define MATVEC_THREADS {_MATVEC_PARALLEL_THREADS}
 """
 
 
@@ -72,6 +76,28 @@ def _get_q4_matvec_kernel(dtype_name: str, source: str, header: str):
 def _get_q8_matvec_kernel(dtype_name: str, source: str, header: str):
     return mx.fast.metal_kernel(
         name="q8_matvec_decode_forward",
+        input_names=["x", "q_w", "scales", "zeros", "meta"],
+        output_names=["y"],
+        source=source,
+        header=header,
+    )
+
+
+@lru_cache(maxsize=16)
+def _get_q4_matvec_parallel_kernel(dtype_name: str, source: str, header: str):
+    return mx.fast.metal_kernel(
+        name="q4_matvec_decode_parallel_forward",
+        input_names=["x", "packed_w", "scales", "zeros", "meta"],
+        output_names=["y"],
+        source=source,
+        header=header,
+    )
+
+
+@lru_cache(maxsize=16)
+def _get_q8_matvec_parallel_kernel(dtype_name: str, source: str, header: str):
+    return mx.fast.metal_kernel(
+        name="q8_matvec_decode_parallel_forward",
         input_names=["x", "q_w", "scales", "zeros", "meta"],
         output_names=["y"],
         source=source,
@@ -273,6 +299,68 @@ def _normalize_x_2d(x: mx.array) -> tuple[mx.array, int, int]:
     raise ValueError(f"x must have shape [B,K] or [B,1,K], got {x.shape}")
 
 
+def _validate_matvec_input_dtype(x2d: mx.array):
+    if x2d.dtype not in (mx.float16, mx.bfloat16):
+        raise TypeError(f"x dtype must be float16 or bfloat16, got {x2d.dtype}")
+
+
+def _zeros_arr_for_matvec(N: int, K: int, scales: mx.array, zeros: mx.array | None, group_size: int):
+    groups = _validate_group_params(N, K, scales, zeros, group_size)
+    has_zero = 1 if zeros is not None else 0
+    zeros_arr = zeros if zeros is not None else mx.zeros((N, groups), dtype=scales.dtype)
+    return zeros_arr, groups, has_zero
+
+
+def _q4_matvec_decode_parallel(
+    x2d: mx.array,
+    packed_w: mx.array,
+    scales: mx.array,
+    zeros: mx.array | None,
+    *,
+    group_size: int,
+) -> mx.array:
+    B, K = x2d.shape
+    N, K_packed = packed_w.shape
+    zeros_arr, groups, has_zero = _zeros_arr_for_matvec(N, K, scales, zeros, group_size)
+    dtype = x2d.dtype
+    source = _load_source(_Q4_MATVEC_PARALLEL_KERNEL)
+    header = _make_header(dtype)
+    kernel = _get_q4_matvec_parallel_kernel(str(dtype), source, header)
+    meta = mx.array([B, N, K, K_packed, group_size, groups, has_zero], dtype=mx.int32)
+    return kernel(
+        inputs=[x2d.astype(dtype), packed_w.astype(mx.uint8), scales.astype(mx.float32), zeros_arr.astype(mx.float32), meta],
+        output_shapes=[(B, N)],
+        output_dtypes=[dtype],
+        grid=(B * N * _MATVEC_PARALLEL_THREADS, 1, 1),
+        threadgroup=(_MATVEC_PARALLEL_THREADS, 1, 1),
+    )[0]
+
+
+def _q8_matvec_decode_parallel(
+    x2d: mx.array,
+    q_w: mx.array,
+    scales: mx.array,
+    zeros: mx.array | None,
+    *,
+    group_size: int,
+) -> mx.array:
+    B, K = x2d.shape
+    N = q_w.shape[0]
+    zeros_arr, groups, has_zero = _zeros_arr_for_matvec(N, K, scales, zeros, group_size)
+    dtype = x2d.dtype
+    source = _load_source(_Q8_MATVEC_PARALLEL_KERNEL)
+    header = _make_header(dtype)
+    kernel = _get_q8_matvec_parallel_kernel(str(dtype), source, header)
+    meta = mx.array([B, N, K, group_size, groups, has_zero], dtype=mx.int32)
+    return kernel(
+        inputs=[x2d.astype(dtype), q_w.astype(mx.uint8), scales.astype(mx.float32), zeros_arr.astype(mx.float32), meta],
+        output_shapes=[(B, N)],
+        output_dtypes=[dtype],
+        grid=(B * N * _MATVEC_PARALLEL_THREADS, 1, 1),
+        threadgroup=(_MATVEC_PARALLEL_THREADS, 1, 1),
+    )[0]
+
+
 def reference_q4_matvec_decode(
     x: mx.array,
     packed_w: mx.array,
@@ -301,6 +389,7 @@ def q4_matvec_decode(
     backend: str = "auto",
 ) -> mx.array:
     x2d, B, K = _normalize_x_2d(x)
+    _validate_matvec_input_dtype(x2d)
     if packed_w.ndim != 2:
         raise ValueError(f"packed_w must be 2-D [N,K_packed], got {packed_w.shape}")
     N, K_packed = packed_w.shape
@@ -312,15 +401,15 @@ def q4_matvec_decode(
         backend_name = "metal"
     if backend_name == "reference":
         return reference_q4_matvec_decode(x2d, packed_w, scales, zeros, group_size=group_size)
+    if backend_name == "metal_parallel":
+        return _q4_matvec_decode_parallel(x2d, packed_w, scales, zeros, group_size=group_size)
     if backend_name != "metal":
-        raise ValueError("backend must be one of 'reference', 'metal', 'auto'")
+        raise ValueError("backend must be one of 'reference', 'metal', 'metal_parallel', 'auto'")
     dtype = x2d.dtype
     source = _load_source(_Q4_MATVEC_KERNEL)
     header = _make_header(dtype)
     kernel = _get_q4_matvec_kernel(str(dtype), source, header)
-    groups = math.ceil(K / group_size)
-    has_zero = 1 if zeros is not None else 0
-    zeros_arr = zeros if zeros is not None else mx.zeros((N, groups), dtype=scales.dtype)
+    zeros_arr, groups, has_zero = _zeros_arr_for_matvec(N, K, scales, zeros, group_size)
     meta = mx.array([B, K, N, K_packed, group_size, has_zero], dtype=mx.int32)
     return kernel(
         inputs=[x2d.astype(dtype), packed_w.astype(mx.uint8), scales.astype(mx.float32), zeros_arr.astype(mx.float32), meta],
@@ -356,6 +445,7 @@ def q8_matvec_decode(
     backend: str = "auto",
 ) -> mx.array:
     x2d, B, K = _normalize_x_2d(x)
+    _validate_matvec_input_dtype(x2d)
     if q_w.ndim != 2 or q_w.shape[1] != K:
         raise ValueError(f"q_w must have shape [N,{K}], got {q_w.shape}")
     N = q_w.shape[0]
@@ -365,15 +455,15 @@ def q8_matvec_decode(
         backend_name = "metal"
     if backend_name == "reference":
         return reference_q8_matvec_decode(x2d, q_w, scales, zeros, group_size=group_size)
+    if backend_name == "metal_parallel":
+        return _q8_matvec_decode_parallel(x2d, q_w, scales, zeros, group_size=group_size)
     if backend_name != "metal":
-        raise ValueError("backend must be one of 'reference', 'metal', 'auto'")
+        raise ValueError("backend must be one of 'reference', 'metal', 'metal_parallel', 'auto'")
     dtype = x2d.dtype
     source = _load_source(_Q8_MATVEC_KERNEL)
     header = _make_header(dtype)
     kernel = _get_q8_matvec_kernel(str(dtype), source, header)
-    groups = math.ceil(K / group_size)
-    has_zero = 1 if zeros is not None else 0
-    zeros_arr = zeros if zeros is not None else mx.zeros((N, groups), dtype=scales.dtype)
+    zeros_arr, groups, has_zero = _zeros_arr_for_matvec(N, K, scales, zeros, group_size)
     meta = mx.array([B, K, N, group_size, has_zero], dtype=mx.int32)
     return kernel(
         inputs=[x2d.astype(dtype), q_w.astype(mx.uint8), scales.astype(mx.float32), zeros_arr.astype(mx.float32), meta],
