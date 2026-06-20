@@ -31,7 +31,7 @@ This repo is evolving as an experimental Apple Silicon MLX/Metal kernel lab for 
 - [x] Checkpoint-to-quantized packaging
 - [x] Tokenizer and sampling demo
 - [x] Multi-layer decode stack
-- [ ] Production checkpoint converter
+- [x] Production checkpoint converter
 - [ ] Real tokenizer adapter
 - [ ] Full tiny-model generation demo
 - [ ] Optimized prefill stack
@@ -152,6 +152,14 @@ The intended workflow for each new primitive is:
 
 ### v0.29 production checkpoint converter
 
+- [x] JSON package metadata format
+- [x] synthetic/in-memory conversion path
+- [x] manifest dry-run planning
+- [x] fused QKV packaging
+- [x] q4/q8 layer package metadata
+- [x] package inspection CLI
+- [x] per-layer tensor metadata
+- [x] converter tests and CLI tests
 - extend the local packaging scaffold into a more practical checkpoint conversion flow
 - keep dependency growth and model-format assumptions explicit
 

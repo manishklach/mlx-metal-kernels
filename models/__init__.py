@@ -22,6 +22,7 @@ from .checkpoint_mapping import (
     validate_llama_checkpoint_shapes,
     validate_llama_layer_shapes,
 )
+from .checkpoint_converter import CheckpointConverter, CheckpointConverterConfig, CheckpointConverterReport
 from .checkpoint_quantizer import CheckpointQuantizer, QuantizationReport
 from .generation import (
     GenerationConfig,
@@ -64,6 +65,12 @@ from .quantize_weights import (
     quantize_weight_groupwise,
 )
 from .quantized_layer_package import QuantizedLinearPackage, QuantizedLlamaLayerPackage
+from .quantized_package_io import (
+    QuantizedCheckpointPackage,
+    QuantizedLayerMetadata,
+    QuantizedTensorMetadata,
+    package_from_quantized_layers,
+)
 from .sampling import apply_repetition_penalty, greedy_sample, sample_logits, softmax, top_k_filter, top_p_filter
 from .tensor_store import InMemoryTensorStore, ManifestTensorStore, SafeTensorsTensorStore, TensorStore
 from .tokenization import CharTokenizer, TokenizerProtocol, WhitespaceTokenizer
@@ -77,6 +84,9 @@ except ImportError:  # pragma: no cover - allows shape-only helpers without MLX 
     LlamaLikeKernelAdapter = None
 
 __all__ = [
+    "CheckpointConverter",
+    "CheckpointConverterConfig",
+    "CheckpointConverterReport",
     "AdapterIssue",
     "AdapterReport",
     "apply_repetition_penalty",
@@ -118,8 +128,11 @@ __all__ = [
     "quantized_linear_spec",
     "QuantizationConfig",
     "QuantizationReport",
+    "QuantizedCheckpointPackage",
+    "QuantizedLayerMetadata",
     "QuantizedLinearPackage",
     "QuantizedLlamaLayerPackage",
+    "QuantizedTensorMetadata",
     "QuantizedTensorSpec",
     "QuantizedWeight",
     "quantize_weight_groupwise",
@@ -151,6 +164,7 @@ __all__ = [
     "build_fused_qkv_manifest_entries",
     "build_llama_name_map",
     "build_rope_tables",
+    "package_from_quantized_layers",
 ]
 
 if KernelBackendConfig is not None:

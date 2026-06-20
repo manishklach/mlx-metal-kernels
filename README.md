@@ -448,6 +448,37 @@ python benchmarks/bench_llama_stack_decode.py --bits 4 --B 1 --T 16 --num-layers
 
 This is synthetic random-weight infrastructure for runtime plumbing and cache validation, not production text generation.
 
+## Checkpoint converter scaffold
+
+The repo includes a dependency-light checkpoint converter scaffold for turning local layer tensors into repo-native q4/q8 package metadata.
+
+Current scope:
+
+- JSON package metadata (QuantizedCheckpointPackage)
+- synthetic/in-memory conversion path
+- manifest dry-run planning
+- fused QKV packaging
+- q4/q8 layer package metadata
+- package inspection CLI
+- per-layer tensor metadata (original shapes, packed shapes, scales)
+
+Out of scope:
+
+- model downloads
+- tokenizer
+- production safetensors conversion
+- calibrated quantization
+- GPTQ/AWQ/SmoothQuant
+- full model serving
+
+Commands:
+
+```bash
+python scripts/convert_checkpoint.py --synthetic-demo --bits 4 --group-size 32 --output /tmp/mlx_quant_package.json
+python scripts/inspect_quantized_package.py /tmp/mlx_quant_package.json
+python examples/checkpoint_converter_demo.py
+```
+
 ## Tokenizer and sampling scaffold
 
 The repo includes a lightweight tokenizer, sampling, and generation scaffold for synthetic single-layer experiments.
