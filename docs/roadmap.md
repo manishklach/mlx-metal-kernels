@@ -26,10 +26,11 @@
 14. v0.14 End-to-end toy transformer layer decode benchmark
 15. v0.15 simdgroup_matrix attention experiments
 16. v0.16 Chip-specific autotuning + backend selection registry
-17. v0.17 real model integration scaffold
+17. v0.17 Real model integration scaffold
 18. v0.18 q4 MLP fused block
-19. v0.19 chip-specific tuned configs
-20. v1.0 stable experimental kernel suite
+19. v0.19 GQA/MQA support
+20. v0.20 real checkpoint loader scaffold
+21. v1.0 stable experimental kernel suite
 
 ## v0.2: Transformer primitives
 
@@ -123,20 +124,25 @@
 - Add an opt-in local autotune cache keyed by operation, shape, dtype, and machine information.
 - Keep runtime selection conservative unless a tuned local result is available.
 
-## v0.17: real model integration scaffold
+## v0.17: Real model integration scaffold
 
-- Add small model-facing composition helpers that exercise the kernel library under realistic decode shapes.
-- Keep integration harnesses correctness-first and benchmarkable.
+- Add Llama-like config, weight-layout specs, and adapter helpers around the current decode-layer kernels.
+- Keep the first scaffold explicit, lightweight, and focused on future checkpoint integration.
 
 ## v0.18: q4 MLP fused block
 
 - Extend quantized transformer composition beyond attention into MLP-heavy decode blocks.
 - Reuse validated q4 matvec primitives before adding new fused kernels.
 
-## v0.19: chip-specific tuned configs
+## v0.19: GQA/MQA support
 
-- Add curated tuned configurations only after enough local autotune evidence exists per chip family.
-- Keep those configs explicit and measurable rather than assuming they generalize.
+- Add grouped-query and multi-query cache/update/decode support.
+- Extend the model adapter once KV-head expansion or native grouped-query handling is available.
+
+## v0.20: real checkpoint loader scaffold
+
+- Add a lightweight checkpoint-loading bridge once the layout contracts stabilize.
+- Keep production model loading, tokenizer integration, and full inference loops out of scope until the scaffold is validated.
 
 ## Historical notes
 

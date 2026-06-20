@@ -19,6 +19,7 @@ Longer term, this repo is intended to become an experimental kernel lab for MLX 
 - Attention: reference, baseline, row-parallel, and tiled-K/V fused attention backends.
 - Simdgroup Attention Experiments: explicit `simdgroup_d64` prefill backend for experimental `D=64` fp16 attention work.
 - Autotuning Infrastructure: opt-in backend registry plus local machine-specific autotune cache for backend selection experiments.
+- Real model integration scaffold: Llama-like config, weight-layout specs, and adapter helpers that bridge current kernels toward future checkpoint integration.
 - Threadgroup Attention v2: cooperative threadgroup-reduction backends for decode, paged decode, and prefill attention.
 - RMSNorm: correctness-first row-wise normalization with a pure MLX path and a Metal backend.
 - RoPE: rotary embedding application for transformer attention inputs.
@@ -154,6 +155,8 @@ python benchmarks/bench_simdgroup_attention.py --mode prefill --B 1 --S 128 --H 
 python benchmarks/autotune.py --op all --quick --dtype float16 --write-cache
 python benchmarks/bench_toy_transformer_decode.py --cache contiguous --bits 4 --B 1 --K 512 --H 8 --D 64 --INTERMEDIATE 1024 --MAX_S 64 --T 8 --dtype float16 --backend-preset parallel
 python benchmarks/bench_toy_transformer_decode.py --cache paged --bits 4 --B 1 --K 512 --H 8 --D 64 --INTERMEDIATE 1024 --MAX_S 64 --PAGE_SIZE 16 --T 8 --dtype float16 --backend-preset parallel
+python examples/inspect_model_shapes.py
+python examples/llama_like_decode_demo.py
 ```
 
 ## Benchmark
@@ -392,6 +395,23 @@ python benchmarks/run_all_benchmarks.py --quick --use-autotune
 ```
 
 Autotune results are local to a machine and should not be treated as universal performance claims.
+
+## Real Model Integration Scaffold
+
+The repo now includes a shape/config/adaptor scaffold for Llama-like models:
+
+- `models/llama_config.py`
+- `models/weight_layouts.py`
+- `models/model_adapter.py`
+
+Examples:
+
+```bash
+python examples/inspect_model_shapes.py
+python examples/llama_like_decode_demo.py
+```
+
+This repo does not yet provide production Llama inference or full checkpoint loading. The current scope is configuration, weight-layout mapping, cache setup, and decode-layer integration scaffolding on top of the existing kernel building blocks.
 
 This project does not claim performance superiority without benchmark data from a specific Apple Silicon machine.
 
