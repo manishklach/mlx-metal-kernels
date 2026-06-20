@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 
 from models.tokenization import CharTokenizer, WhitespaceTokenizer
@@ -12,6 +14,8 @@ from models.tokenizer_adapters import (
     describe_tokenizer,
     load_tokenizer_for_generation,
 )
+
+_tokenizers_available = importlib.util.find_spec("tokenizers") is not None
 
 
 class TestOptionalDependencyError:
@@ -45,12 +49,20 @@ class TestTokenizerAdapterFactory:
             TokenizerAdapterFactory.from_file("/nonexistent/path.json")
 
     def test_from_file_unknown_kind_raises(self):
-        with pytest.raises(ValueError, match="unknown tokenizer kind"):
+        with pytest.raises(ValueError, match="path is required"):
             TokenizerAdapterFactory.from_file(kind="unknown_kind")
 
-    def test_from_file_unknown_extension_raises(self):
+    def test_from_file_unknown_kind_with_path_raises(self, tmp_path):
+        f = tmp_path / "tokenizer.json"
+        f.write_text("{}")
+        with pytest.raises(ValueError, match="unknown tokenizer kind"):
+            TokenizerAdapterFactory.from_file(str(f), kind="unknown_kind")
+
+    def test_from_file_unknown_extension_raises(self, tmp_path):
+        f = tmp_path / "tokenizer.xyz"
+        f.write_text("dummy")
         with pytest.raises(ValueError, match="cannot infer tokenizer kind"):
-            TokenizerAdapterFactory.from_file("/tmp/tokenizer.xyz")
+            TokenizerAdapterFactory.from_file(str(f))
 
     def test_from_file_requires_path_for_non_toy_kinds(self):
         with pytest.raises(ValueError, match="path is required"):
@@ -90,14 +102,17 @@ class TestDescribeTokenizer:
 
 
 class TestHFTokenizerAdapter:
+    @pytest.mark.skipif(_tokenizers_available, reason="tokenizers is installed; test is for missing-dependency scenario")
     def test_init_with_missing_tokenizers_raises(self):
         with pytest.raises(OptionalDependencyError, match="tokenizers"):
             HFTokenizerAdapter._lazy_load()
 
+    @pytest.mark.skipif(_tokenizers_available, reason="tokenizers is installed; test is for missing-dependency scenario")
     def test_init_with_nonexistent_file(self):
         with pytest.raises(OptionalDependencyError, match="tokenizers"):
             HFTokenizerAdapter("/nonexistent/tokenizer.json")
 
+    @pytest.mark.skipif(_tokenizers_available, reason="tokenizers is installed; test is for missing-dependency scenario")
     def test_raise_for_missing_dependency(self):
         with pytest.raises(OptionalDependencyError, match="tokenizers"):
             HFTokenizerAdapter._lazy_load()

@@ -12,7 +12,8 @@ def test_char_tokenizer_unknown_char_maps_to_unk():
     tokenizer = CharTokenizer(vocab="abc", add_bos=False, add_eos=False)
     token_ids = tokenizer.encode("az")
     assert token_ids[1] == tokenizer.unk_token_id
-    assert tokenizer.decode(token_ids) == "a<unk>"
+    assert tokenizer.decode(token_ids, skip_special_tokens=False) == "a<unk>"
+    assert tokenizer.decode(token_ids) == "a"
 
 
 def test_char_tokenizer_bos_eos_behavior_and_decode_skip():
@@ -33,7 +34,8 @@ def test_whitespace_tokenizer_known_and_unknown_words():
     token_ids = tokenizer.encode("hello there world")
     assert token_ids[0] != tokenizer.unk_token_id
     assert token_ids[1] == tokenizer.unk_token_id
-    assert tokenizer.decode(token_ids) == "hello <unk> world"
+    assert tokenizer.decode(token_ids, skip_special_tokens=False) == "hello <unk> world"
+    assert tokenizer.decode(token_ids) == "hello world"
 
 
 def test_whitespace_tokenizer_vocab_size():

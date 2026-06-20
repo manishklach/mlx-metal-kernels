@@ -1,10 +1,16 @@
 # MLX Metal Kernels
 
+[![CI](https://github.com/manishklach/mlx-metal-kernels/actions/workflows/ci.yml/badge.svg)](https://github.com/manishklach/mlx-metal-kernels/actions/workflows/ci.yml)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+
 Experimental MLX custom Metal kernels for Apple Silicon LLM inference.
 
 This repository is a correctness-first kernel lab for exploring how far Apple Silicon GPUs can be pushed through MLX custom Metal kernels. It includes attention kernels, decode attention, KV-cache and paged KV-cache operations, q4/q8 quantized matvec kernels, RMSNorm, RoPE, SwiGLU, fused decode helpers, quantized decode blocks, quantized MLP blocks, experimental fused q4/q8 MLP kernels, toy transformer-layer benchmarks, autotuning infrastructure, and Llama-like model integration scaffolding.
 
 The project is not a production inference engine. It is an experimental research repo focused on building, validating, benchmarking, and iterating on Mac-native transformer inference primitives.
+
+![Architecture](docs/architecture.svg)
 
 Design principles:
 
@@ -40,6 +46,8 @@ The repo currently covers several layers of the local LLM inference stack:
 This repo does not currently claim to outperform MLX native kernels, CUDA FlashAttention, or production inference engines.
 
 It is not yet a full model runtime, tokenizer pipeline, checkpoint loader, or production Llama/Mistral inference engine.
+
+End-to-end generation from real model weights has not yet been benchmarked; current results are kernel- and block-level only.
 
 Performance claims should only be made from benchmark data generated on a specific Apple Silicon machine.
 

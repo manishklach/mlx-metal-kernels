@@ -10,3 +10,4 @@ build/
 *.swo
 *~
 .DS_Store
+readme_results_section.md

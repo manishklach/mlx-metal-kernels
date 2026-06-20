@@ -56,10 +56,26 @@ class CharTokenizer(TokenizerProtocol):
         self.add_eos = add_eos
         self._id_to_token = list(self.SPECIAL_TOKENS) + deduped
         self._token_to_id = {token: idx for idx, token in enumerate(self._id_to_token)}
-        self.pad_token_id = self._token_to_id["<pad>"]
-        self.bos_token_id = self._token_to_id["<bos>"]
-        self.eos_token_id = self._token_to_id["<eos>"]
-        self.unk_token_id = self._token_to_id["<unk>"]
+        self._pad_token_id = self._token_to_id["<pad>"]
+        self._bos_token_id = self._token_to_id["<bos>"]
+        self._eos_token_id = self._token_to_id["<eos>"]
+        self._unk_token_id = self._token_to_id["<unk>"]
+
+    @property
+    def pad_token_id(self) -> int:
+        return self._pad_token_id
+
+    @property
+    def bos_token_id(self) -> int:
+        return self._bos_token_id
+
+    @property
+    def eos_token_id(self) -> int:
+        return self._eos_token_id
+
+    @property
+    def unk_token_id(self) -> int:
+        return self._unk_token_id
 
     @property
     def vocab_size(self) -> int:
@@ -107,10 +123,26 @@ class WhitespaceTokenizer(TokenizerProtocol):
         self.add_eos = add_eos
         self._id_to_token = list(self.SPECIAL_TOKENS) + deduped
         self._token_to_id = {token: idx for idx, token in enumerate(self._id_to_token)}
-        self.pad_token_id = self._token_to_id["<pad>"]
-        self.bos_token_id = self._token_to_id["<bos>"]
-        self.eos_token_id = self._token_to_id["<eos>"]
-        self.unk_token_id = self._token_to_id["<unk>"]
+        self._pad_token_id = self._token_to_id["<pad>"]
+        self._bos_token_id = self._token_to_id["<bos>"]
+        self._eos_token_id = self._token_to_id["<eos>"]
+        self._unk_token_id = self._token_to_id["<unk>"]
+
+    @property
+    def pad_token_id(self) -> int:
+        return self._pad_token_id
+
+    @property
+    def bos_token_id(self) -> int:
+        return self._bos_token_id
+
+    @property
+    def eos_token_id(self) -> int:
+        return self._eos_token_id
+
+    @property
+    def unk_token_id(self) -> int:
+        return self._unk_token_id
 
     @property
     def vocab_size(self) -> int:
