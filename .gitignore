@@ -11,3 +11,4 @@ build/
 *~
 .DS_Store
 readme_results_section.md
+.codex_agent_prompt_result.txt
