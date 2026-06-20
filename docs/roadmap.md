@@ -19,10 +19,14 @@
 7. v0.7 Fused decode block
 8. v0.8 Shape-specialized attention/decode kernels
 9. v0.9 Parallel q4/q8 matvec optimization
-10. v0.10 Apple-chip benchmark suite
+10. v0.10 Apple-chip benchmark suite + report generator
 11. v0.11 fused quantized decode block
 12. v0.12 SIMD/threadgroup optimized attention v2
-13. v1.0 stable experimental kernel suite
+13. v0.13 Multi-output q4/q8 matvec tiling
+14. v0.14 End-to-end toy transformer layer decode benchmark
+15. v0.15 simdgroup_matrix attention experiments
+16. v0.16 chip-specific autotuning
+17. v1.0 stable experimental kernel suite
 
 ## v0.2: Transformer primitives
 
@@ -72,6 +76,31 @@
 - Parallelize reductions over K.
 - Add explicit `metal_parallel` backends for q4 and q8 decode matvec.
 - Keep the original one-thread-per-output-element kernel as the conservative default.
+
+## v0.10: Apple-chip benchmark suite + report generator
+
+- Add a unified benchmark runner that records JSON and CSV output.
+- Capture system metadata needed to compare Apple Silicon results.
+- Generate Markdown benchmark reports and comparison tables from saved runs.
+
+## v0.11: Fused quantized decode block
+
+- Add composition-first q4/q8 QKV projection helpers on top of the decode matvec kernels.
+- Add contiguous and paged quantized decode blocks by reusing the existing decode block helpers.
+- Keep every quantized decode path reference-validated before benchmarking.
+
+## v0.12: SIMD/threadgroup optimized attention v2
+
+- Add experimental threadgroup decode attention for contiguous KV caches.
+- Add experimental threadgroup paged decode attention over block tables.
+- Add experimental threadgroup full-attention prefill backend.
+- Keep `auto` conservative and gate threadgroup routing behind an explicit environment variable.
+
+## v0.13: Multi-output q4/q8 matvec tiling
+
+- Add experimental `metal_tiled` q4 and q8 decode matvec backends.
+- Reuse one activation load across a small tile of output channels per threadgroup.
+- Keep the first tiled version simple and reference-validated before performance claims.
 
 ## Historical notes
 

@@ -17,6 +17,7 @@ Longer term, this repo is intended to become an experimental kernel lab for MLX 
 ## Kernel Families
 
 - Attention: reference, baseline, row-parallel, and tiled-K/V fused attention backends.
+- Threadgroup Attention v2: cooperative threadgroup-reduction backends for decode, paged decode, and prefill attention.
 - RMSNorm: correctness-first row-wise normalization with a pure MLX path and a Metal backend.
 - RoPE: rotary embedding application for transformer attention inputs.
 - SwiGLU: fused SiLU gate times up-projection activation.
@@ -24,8 +25,10 @@ Longer term, this repo is intended to become an experimental kernel lab for MLX 
 - Decode Attention: single-token attention over KV cache tensors.
 - Layout and fused helpers: QKV split, split+RoPE, cache-update fusion, residual add, and RMSNorm+residual.
 - Quantization: q4/q8 dequantization plus correctness-first and parallel decode matvec kernels.
+- Multi-output quantized matvec tiling: experimental tiled q4/q8 decode matvec backends that reuse activations across small output-channel tiles.
 - Paged KV-cache: paged cache allocation, updates, and paged decode attention scaffolds.
 - Fused Decode Block: composition-first contiguous and paged decode helpers from projected QKV tokens.
+- Quantized Decode Block: composition-first q4/q8 decode blocks built from quantized matvec plus decode-attention helpers.
 - Shape-specialized kernels: experimental D=64 and D=128 attention/decode backends.
 - Future: paged KV, quantized matvec, and tiled attention kernels.
 
@@ -44,7 +47,8 @@ This repository starts with a correctness-first implementation and then adds pro
 5. Specialized D=64 and D=128 kernels
 6. Decode attention for single-token inference
 7. KV-cache and paged-KV kernels
-8. Additional MLX custom kernels for transformer inference
+8. Quantized decode block
+9. Additional MLX custom kernels for transformer inference
 
 The design philosophy is simple:
 
@@ -91,6 +95,7 @@ Backends:
   consistently validated on Apple Silicon.
 
 Specialized decode and attention backends are opt-in. `auto` stays conservative by default; set `MLX_METAL_USE_SPECIALIZED=1` to route supported `D=64` and `D=128` shapes to the specialized kernels during local experiments.
+Threadgroup attention is also opt-in. Set `MLX_METAL_USE_THREADGROUP_ATTENTION=1` to let `auto` dispatch to the experimental threadgroup attention backends.
 
 This is **not yet** a heavily optimized tiled/threadgroup-memory or
 simdgroup-matrix FlashAttention kernel. The baseline path remains the default
@@ -131,6 +136,13 @@ python benchmarks/bench_specialized_paged_decode_attention.py --B 2 --MAX_S 128 
 python benchmarks/bench_specialized_fast_attention.py --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
 python benchmarks/bench_quant_matvec_parallel.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
 python benchmarks/bench_quant_matvec_parallel.py --bits 8 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
+python benchmarks/bench_quant_matvec_tiled.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
+python benchmarks/bench_quant_matvec_tiled.py --bits 8 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
+python benchmarks/bench_quantized_decode_block.py --bits 4 --cache contiguous --B 1 --K 4096 --H 32 --D 128 --MAX_S 128 --T 16 --dtype float16 --backend-preset parallel
+python benchmarks/bench_quantized_decode_block.py --bits 4 --cache paged --B 1 --K 4096 --H 32 --D 128 --MAX_S 128 --PAGE_SIZE 16 --T 16 --dtype float16 --backend-preset parallel
+python benchmarks/bench_threadgroup_attention.py --mode decode --B 1 --MAX_S 128 --H 8 --D 64 --length 128 --dtype float16 --backend all
+python benchmarks/bench_threadgroup_attention.py --mode paged_decode --B 1 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
+python benchmarks/bench_threadgroup_attention.py --mode prefill --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
 ```
 
 ## Benchmark
@@ -158,6 +170,8 @@ python benchmarks/bench_specialized_paged_decode_attention.py --B 2 --MAX_S 128 
 python benchmarks/bench_specialized_fast_attention.py --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
 python benchmarks/bench_quant_matvec_parallel.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
 python benchmarks/bench_quant_matvec_parallel.py --bits 8 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
+python benchmarks/bench_quantized_decode_block.py --bits 4 --cache contiguous --B 1 --K 4096 --H 32 --D 128 --MAX_S 128 --T 16 --dtype float16 --backend-preset parallel
+python benchmarks/bench_quantized_decode_block.py --bits 4 --cache paged --B 1 --K 4096 --H 32 --D 128 --MAX_S 128 --PAGE_SIZE 16 --T 16 --dtype float16 --backend-preset parallel
 ```
 
 ## API
@@ -174,6 +188,7 @@ from ops.layout_ops import qkv_split, qkv_split_rope
 from ops.norm_ops import rms_norm
 from ops.paged_kv_ops import allocate_paged_kv_cache, paged_decode_attention, paged_decode_step, paged_kv_cache_update
 from ops.quant_ops import dequant_q4, dequant_q8, pack_q4, q4_matvec_decode, q8_matvec_decode
+from ops.quantized_decode_block_ops import quantized_decode_block
 from ops.rope_ops import apply_rope
 
 Q = mx.random.normal((1, 128, 8, 64)).astype(mx.float16)
@@ -183,6 +198,7 @@ V = mx.random.normal((1, 128, 8, 64)).astype(mx.float16)
 O = fast_attention(Q, K, V, causal=True, backend="auto")
 O_exp = fast_attention(Q, K, V, causal=True, backend="row_parallel")
 O_tiled = fast_attention(Q, K, V, causal=True, backend="tiled_kv")
+O_threadgroup = fast_attention(Q, K, V, causal=False, backend="threadgroup")
 O_d64 = fast_attention(Q, K, V, causal=False, backend="baseline_d64")
 
 x = mx.random.normal((2, 8, 1024)).astype(mx.float16)
@@ -208,6 +224,7 @@ v_new = mx.random.normal((1, 1, 8, 64)).astype(mx.float16)
 
 K_cache, V_cache = kv_cache_update(K_cache, V_cache, k_new, v_new, 0)
 O_decode = decode_attention(q, K_cache, V_cache, lengths=1, backend="auto")
+O_decode_threadgroup = decode_attention(q, K_cache, V_cache, lengths=1, backend="metal_threadgroup")
 O_decode_d64 = decode_attention(q, K_cache, V_cache, lengths=1, backend="metal_d64")
 O_step, K_cache, V_cache = decode_step(q, k_new, v_new, K_cache, V_cache, 1, backend="auto")
 
@@ -227,22 +244,46 @@ y_q4 = q4_matvec_decode(mx.random.normal((1, 64)).astype(mx.float16), packed_w, 
 y_q4_parallel = q4_matvec_decode(
     mx.random.normal((1, 64)).astype(mx.float16), packed_w, scales, zeros=None, group_size=32, backend="metal_parallel"
 )
+y_q4_tiled = q4_matvec_decode(
+    mx.random.normal((1, 64)).astype(mx.float16), packed_w, scales, zeros=None, group_size=32, backend="metal_tiled"
+)
 
 q8_vals = (mx.random.uniform((32, 64)) * 255).astype(mx.uint8)
 y_q8 = q8_matvec_decode(mx.random.normal((1, 64)).astype(mx.float16), q8_vals, scales, group_size=32, backend="auto")
 y_q8_parallel = q8_matvec_decode(
     mx.random.normal((1, 64)).astype(mx.float16), q8_vals, scales, zeros=None, group_size=32, backend="metal_parallel"
 )
+y_q8_tiled = q8_matvec_decode(
+    mx.random.normal((1, 64)).astype(mx.float16), q8_vals, scales, zeros=None, group_size=32, backend="metal_tiled"
+)
 
 PAGE_SIZE = 4
 K_pages, V_pages, block_table = allocate_paged_kv_cache(1, MAX_S, 8, 64, PAGE_SIZE, dtype=mx.float16)
 K_pages, V_pages = paged_kv_cache_update(K_pages, V_pages, k_new, v_new, block_table, 0)
 out_paged = paged_decode_attention(q, K_pages, V_pages, block_table, lengths=1, backend="auto")
+out_paged_threadgroup = paged_decode_attention(q, K_pages, V_pages, block_table, lengths=1, backend="metal_threadgroup")
 out_paged_d64 = paged_decode_attention(q, K_pages, V_pages, block_table, lengths=1, backend="metal_d64")
 out_step, K_pages, V_pages = paged_decode_step(q, k_new, v_new, K_pages, V_pages, block_table, 1, backend="auto")
 out_block, K_cache, V_cache = decode_block_from_qkv(packed_qkv, K_cache, V_cache, cos, sin, 4, H=8, D=64, backend="auto")
 out_paged_block, K_pages, V_pages = paged_decode_block_from_qkv(
     packed_qkv, K_pages, V_pages, block_table, cos, sin, 2, H=8, D=64, backend="auto"
+)
+y_qblock, K_cache, V_cache = quantized_decode_block(
+    mx.random.normal((1, 1, 512)).astype(mx.float16),
+    pack_q4((mx.random.uniform((3 * 8 * 64, 512)) * 16).astype(mx.uint8)),
+    mx.ones((3 * 8 * 64, 16), dtype=mx.float32),
+    pack_q4((mx.random.uniform((512, 8 * 64)) * 16).astype(mx.uint8)),
+    mx.ones((512, 16), dtype=mx.float32),
+    K_cache,
+    V_cache,
+    cos,
+    sin,
+    5,
+    bits=4,
+    H=8,
+    D=64,
+    matvec_backend="metal_parallel",
+    block_backend="metal",
 )
 ```
 
@@ -258,14 +299,31 @@ python benchmarks/bench_decode_loop.py --B 2 --MAX_S 64 --T 16 --H 8 --D 64 --dt
 python benchmarks/bench_qkv_split.py --B 2 --S 16 --H 8 --D 64 --dtype float16 --backend all
 python benchmarks/bench_fused_qkv_rope_cache.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend all
 python benchmarks/bench_residual_norm.py --B 2 --S 16 --D 1024 --dtype float16 --backend all
+python benchmarks/bench_quantized_decode_block.py --bits 4 --cache contiguous --B 1 --K 4096 --H 32 --D 128 --MAX_S 128 --T 16 --dtype float16 --backend-preset parallel
+python benchmarks/bench_quantized_decode_block.py --bits 4 --cache paged --B 1 --K 4096 --H 32 --D 128 --MAX_S 128 --PAGE_SIZE 16 --T 16 --dtype float16 --backend-preset parallel
+python benchmarks/bench_threadgroup_attention.py --mode decode --B 1 --MAX_S 128 --H 8 --D 64 --length 128 --dtype float16 --backend all
+python benchmarks/bench_threadgroup_attention.py --mode paged_decode --B 1 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
+python benchmarks/bench_threadgroup_attention.py --mode prefill --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
 python benchmarks/bench_dequant.py --bits 4 --M 4096 --K 4096 --dtype float16 --backend all
 python benchmarks/bench_quant_matvec_decode.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
 python benchmarks/bench_quant_matvec_parallel.py --bits 4 --B 1 --K 4096 --N 4096 --group-size 32 --dtype float16 --backend all
 python benchmarks/bench_quant_matvec_parallel.py --bits 8 --B 1 --K 4096 --N 4096 --group-size 32 --dtype float16 --backend all
+python benchmarks/bench_quant_matvec_tiled.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
+python benchmarks/bench_quant_matvec_tiled.py --bits 8 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
 python benchmarks/bench_paged_kv_cache_update.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --dtype float16 --backend all
 python benchmarks/bench_paged_decode_attention.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
 python benchmarks/bench_paged_decode_loop.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --T 32 --H 8 --D 64 --dtype float16 --backend all
 ```
+
+## Benchmark Suite
+
+```bash
+python benchmarks/run_all_benchmarks.py --quick
+python benchmarks/run_all_benchmarks.py --full --output benchmarks/results/local_results.json --csv benchmarks/results/local_results.csv
+python scripts/save_benchmark_report.py benchmarks/results/local_results.json --output docs/performance_report_local.md
+```
+
+This project does not claim performance superiority without benchmark data from a specific Apple Silicon machine.
 
 ## Roadmap
 

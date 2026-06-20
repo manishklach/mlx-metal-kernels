@@ -13,12 +13,14 @@ from .kv_cache_ops import _normalize_token_shape, normalize_positions
 _KERNEL_DIR = Path(__file__).resolve().parent.parent / "kernels"
 _PAGED_UPDATE_KERNEL = _KERNEL_DIR / "paged_kv_cache_update.metal"
 _PAGED_DECODE_KERNEL = _KERNEL_DIR / "paged_decode_attention.metal"
+_PAGED_DECODE_THREADGROUP_KERNEL = _KERNEL_DIR / "paged_decode_attention_threadgroup.metal"
 _SPECIALIZED_PAGED_DECODE_KERNELS = {
     "metal_d64": _KERNEL_DIR / "paged_decode_attention_d64.metal",
     "metal_d128": _KERNEL_DIR / "paged_decode_attention_d128.metal",
 }
 _BLOCK_LOOKUP_KERNEL = _KERNEL_DIR / "block_table_lookup.metal"
 _THREADS = 256
+_THREADGROUP_THREADS = 128
 
 
 def _make_header(dtype: mx.Dtype, *, max_head_dim: int = 128, fixed_head_dim: int | None = None) -> str:
@@ -34,6 +36,7 @@ def _make_header(dtype: mx.Dtype, *, max_head_dim: int = 128, fixed_head_dim: in
 using namespace metal;
 #define ELEM_TYPE {elem_type}
 #define MAX_HEAD_DIM {max_head_dim}
+#define TG_THREADS {_THREADGROUP_THREADS}
 {fixed_dim_line}
 """
 
@@ -93,6 +96,8 @@ def _get_named_paged_decode_kernel(kernel_name: str, dtype_name: str, source: st
 
 def _resolve_backend(backend_name: str, D: int) -> str:
     if backend_name == "auto":
+        if os.environ.get("MLX_METAL_USE_THREADGROUP_ATTENTION", "0") == "1":
+            return "metal_threadgroup"
         if os.environ.get("MLX_METAL_USE_SPECIALIZED", "0") == "1":
             if D == 64:
                 return "metal_d64"
@@ -327,25 +332,35 @@ def paged_decode_attention(
     backend_name = _resolve_backend(backend.lower(), D)
     if backend_name == "reference":
         return reference_paged_decode_attention(q, K_pages, V_pages, block_table, lengths_arr, scale=scale)
-    if backend_name not in ("metal", "metal_d64", "metal_d128"):
-        raise ValueError("backend must be one of 'reference', 'metal', 'metal_d64', 'metal_d128', 'auto'")
+    if backend_name not in ("metal", "metal_threadgroup", "metal_d64", "metal_d128"):
+        raise ValueError("backend must be one of 'reference', 'metal', 'metal_threadgroup', 'metal_d64', 'metal_d128', 'auto'")
     dtype = q.dtype
     if backend_name == "metal":
         source = _load_source(_PAGED_DECODE_KERNEL)
         header = _make_header(dtype)
         kernel = _get_paged_decode_kernel(str(dtype), source, header)
+        grid = (B * H, 1, 1)
+        threadgroup = (1, 1, 1)
+    elif backend_name == "metal_threadgroup":
+        source = _load_source(_PAGED_DECODE_THREADGROUP_KERNEL)
+        header = _make_header(dtype)
+        kernel = _get_named_paged_decode_kernel("paged_decode_attention_threadgroup_forward", str(dtype), source, header)
+        grid = (B * H * _THREADGROUP_THREADS, 1, 1)
+        threadgroup = (_THREADGROUP_THREADS, 1, 1)
     else:
         source = _load_source(_SPECIALIZED_PAGED_DECODE_KERNELS[backend_name])
         header = _make_header(dtype, fixed_head_dim=D)
         kernel = _get_named_paged_decode_kernel(f"paged_decode_attention_{D}_forward", str(dtype), source, header)
+        grid = (B * H, 1, 1)
+        threadgroup = (1, 1, 1)
     meta = mx.array([B, NUM_PAGES, PAGE_SIZE, H, D, MAX_BLOCKS], dtype=mx.int32)
     scale_arr = mx.array([float(scale)], dtype=mx.float32)
     return kernel(
         inputs=[q.astype(dtype), K_pages.astype(dtype), V_pages.astype(dtype), block_table.astype(mx.int32), lengths_arr.astype(mx.int32), meta, scale_arr],
         output_shapes=[q.shape],
         output_dtypes=[dtype],
-        grid=(B * H, 1, 1),
-        threadgroup=(1, 1, 1),
+        grid=grid,
+        threadgroup=threadgroup,
     )[0]
 
 

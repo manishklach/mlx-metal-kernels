@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -14,8 +15,12 @@ _Q4_MATVEC_KERNEL = _KERNEL_DIR / "q4_matvec_decode.metal"
 _Q8_MATVEC_KERNEL = _KERNEL_DIR / "q8_matvec_decode.metal"
 _Q4_MATVEC_PARALLEL_KERNEL = _KERNEL_DIR / "q4_matvec_decode_parallel.metal"
 _Q8_MATVEC_PARALLEL_KERNEL = _KERNEL_DIR / "q8_matvec_decode_parallel.metal"
+_Q4_MATVEC_TILED_KERNEL = _KERNEL_DIR / "q4_matvec_decode_tiled.metal"
+_Q8_MATVEC_TILED_KERNEL = _KERNEL_DIR / "q8_matvec_decode_tiled.metal"
 _THREADS = 256
 _MATVEC_PARALLEL_THREADS = 128
+_MATVEC_TILED_THREADS = 128
+_MATVEC_N_TILE = 4
 
 
 def _make_header(dtype: mx.Dtype) -> str:
@@ -30,6 +35,7 @@ def _make_header(dtype: mx.Dtype) -> str:
 using namespace metal;
 #define ELEM_TYPE {elem_type}
 #define MATVEC_THREADS {_MATVEC_PARALLEL_THREADS}
+#define MATVEC_TILED_THREADS {_MATVEC_TILED_THREADS}
 """
 
 
@@ -98,6 +104,28 @@ def _get_q4_matvec_parallel_kernel(dtype_name: str, source: str, header: str):
 def _get_q8_matvec_parallel_kernel(dtype_name: str, source: str, header: str):
     return mx.fast.metal_kernel(
         name="q8_matvec_decode_parallel_forward",
+        input_names=["x", "q_w", "scales", "zeros", "meta"],
+        output_names=["y"],
+        source=source,
+        header=header,
+    )
+
+
+@lru_cache(maxsize=16)
+def _get_q4_matvec_tiled_kernel(dtype_name: str, source: str, header: str):
+    return mx.fast.metal_kernel(
+        name="q4_matvec_decode_tiled_forward",
+        input_names=["x", "packed_w", "scales", "zeros", "meta"],
+        output_names=["y"],
+        source=source,
+        header=header,
+    )
+
+
+@lru_cache(maxsize=16)
+def _get_q8_matvec_tiled_kernel(dtype_name: str, source: str, header: str):
+    return mx.fast.metal_kernel(
+        name="q8_matvec_decode_tiled_forward",
         input_names=["x", "q_w", "scales", "zeros", "meta"],
         output_names=["y"],
         source=source,
@@ -361,6 +389,58 @@ def _q8_matvec_decode_parallel(
     )[0]
 
 
+def _q4_matvec_decode_tiled(
+    x2d: mx.array,
+    packed_w: mx.array,
+    scales: mx.array,
+    zeros: mx.array | None,
+    *,
+    group_size: int,
+) -> mx.array:
+    B, K = x2d.shape
+    N, K_packed = packed_w.shape
+    zeros_arr, groups, has_zero = _zeros_arr_for_matvec(N, K, scales, zeros, group_size)
+    dtype = x2d.dtype
+    source = _load_source(_Q4_MATVEC_TILED_KERNEL)
+    header = _make_header(dtype)
+    kernel = _get_q4_matvec_tiled_kernel(str(dtype), source, header)
+    tiles_per_batch = math.ceil(N / _MATVEC_N_TILE)
+    meta = mx.array([B, N, K, K_packed, group_size, groups, has_zero, _MATVEC_N_TILE], dtype=mx.int32)
+    return kernel(
+        inputs=[x2d.astype(dtype), packed_w.astype(mx.uint8), scales.astype(mx.float32), zeros_arr.astype(mx.float32), meta],
+        output_shapes=[(B, N)],
+        output_dtypes=[dtype],
+        grid=(B * tiles_per_batch * _MATVEC_TILED_THREADS, 1, 1),
+        threadgroup=(_MATVEC_TILED_THREADS, 1, 1),
+    )[0]
+
+
+def _q8_matvec_decode_tiled(
+    x2d: mx.array,
+    q_w: mx.array,
+    scales: mx.array,
+    zeros: mx.array | None,
+    *,
+    group_size: int,
+) -> mx.array:
+    B, K = x2d.shape
+    N = q_w.shape[0]
+    zeros_arr, groups, has_zero = _zeros_arr_for_matvec(N, K, scales, zeros, group_size)
+    dtype = x2d.dtype
+    source = _load_source(_Q8_MATVEC_TILED_KERNEL)
+    header = _make_header(dtype)
+    kernel = _get_q8_matvec_tiled_kernel(str(dtype), source, header)
+    tiles_per_batch = math.ceil(N / _MATVEC_N_TILE)
+    meta = mx.array([B, N, K, group_size, groups, has_zero, _MATVEC_N_TILE], dtype=mx.int32)
+    return kernel(
+        inputs=[x2d.astype(dtype), q_w.astype(mx.uint8), scales.astype(mx.float32), zeros_arr.astype(mx.float32), meta],
+        output_shapes=[(B, N)],
+        output_dtypes=[dtype],
+        grid=(B * tiles_per_batch * _MATVEC_TILED_THREADS, 1, 1),
+        threadgroup=(_MATVEC_TILED_THREADS, 1, 1),
+    )[0]
+
+
 def reference_q4_matvec_decode(
     x: mx.array,
     packed_w: mx.array,
@@ -398,13 +478,15 @@ def q4_matvec_decode(
     _validate_group_params(N, K, scales, zeros, group_size)
     backend_name = backend.lower()
     if backend_name == "auto":
-        backend_name = "metal"
+        backend_name = "metal_tiled" if os.environ.get("MLX_METAL_USE_TILED_MATVEC", "0") == "1" else "metal"
     if backend_name == "reference":
         return reference_q4_matvec_decode(x2d, packed_w, scales, zeros, group_size=group_size)
     if backend_name == "metal_parallel":
         return _q4_matvec_decode_parallel(x2d, packed_w, scales, zeros, group_size=group_size)
+    if backend_name == "metal_tiled":
+        return _q4_matvec_decode_tiled(x2d, packed_w, scales, zeros, group_size=group_size)
     if backend_name != "metal":
-        raise ValueError("backend must be one of 'reference', 'metal', 'metal_parallel', 'auto'")
+        raise ValueError("backend must be one of 'reference', 'metal', 'metal_parallel', 'metal_tiled', 'auto'")
     dtype = x2d.dtype
     source = _load_source(_Q4_MATVEC_KERNEL)
     header = _make_header(dtype)
@@ -452,13 +534,15 @@ def q8_matvec_decode(
     _validate_group_params(N, K, scales, zeros, group_size)
     backend_name = backend.lower()
     if backend_name == "auto":
-        backend_name = "metal"
+        backend_name = "metal_tiled" if os.environ.get("MLX_METAL_USE_TILED_MATVEC", "0") == "1" else "metal"
     if backend_name == "reference":
         return reference_q8_matvec_decode(x2d, q_w, scales, zeros, group_size=group_size)
     if backend_name == "metal_parallel":
         return _q8_matvec_decode_parallel(x2d, q_w, scales, zeros, group_size=group_size)
+    if backend_name == "metal_tiled":
+        return _q8_matvec_decode_tiled(x2d, q_w, scales, zeros, group_size=group_size)
     if backend_name != "metal":
-        raise ValueError("backend must be one of 'reference', 'metal', 'metal_parallel', 'auto'")
+        raise ValueError("backend must be one of 'reference', 'metal', 'metal_parallel', 'metal_tiled', 'auto'")
     dtype = x2d.dtype
     source = _load_source(_Q8_MATVEC_KERNEL)
     header = _make_header(dtype)

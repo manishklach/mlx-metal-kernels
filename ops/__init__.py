@@ -47,6 +47,16 @@ from .quant_ops import (
     reference_q8_matvec_decode,
     unpack_q4_reference,
 )
+from .quantized_decode_block_ops import (
+    paged_quantized_decode_block,
+    quantized_decode_block,
+    quantized_output_projection,
+    quantized_qkv_projection,
+    reference_paged_quantized_decode_block,
+    reference_quantized_decode_block,
+    reference_quantized_output_projection,
+    reference_quantized_qkv_projection,
+)
 from .rope_ops import apply_rope, reference_apply_rope
 
 __all__ = [
@@ -57,6 +67,7 @@ __all__ = [
     "decode_step",
     "fast_attention",
     "paged_decode_block_from_qkv",
+    "paged_quantized_decode_block",
     "reference_attention",
     "reference_apply_rope",
     "reference_decode_block_from_qkv",
@@ -64,10 +75,14 @@ __all__ = [
     "reference_decode_step",
     "reference_kv_cache_update",
     "reference_paged_decode_block_from_qkv",
+    "reference_paged_quantized_decode_block",
     "reference_block_table_lookup",
     "reference_paged_decode_attention",
     "reference_paged_decode_step",
     "reference_paged_kv_cache_update",
+    "reference_quantized_decode_block",
+    "reference_quantized_output_projection",
+    "reference_quantized_qkv_projection",
     "reference_qkv_rope_cache_update",
     "reference_qkv_split",
     "reference_qkv_split_rope",
@@ -92,6 +107,9 @@ __all__ = [
     "paged_decode_step",
     "paged_kv_cache_update",
     "pack_q4",
+    "quantized_decode_block",
+    "quantized_output_projection",
+    "quantized_qkv_projection",
     "q4_matvec_decode",
     "q8_matvec_decode",
     "qkv_rope_cache_update",

@@ -24,11 +24,13 @@ _KERNEL_DIR = Path(__file__).resolve().parent.parent / "kernels"
 _DEFAULT_KERNEL = _KERNEL_DIR / "fast_attention.metal"
 _ROW_PARALLEL_KERNEL = _KERNEL_DIR / "fast_attention_row_parallel.metal"
 _TILED_KV_KERNEL = _KERNEL_DIR / "fast_attention_tiled_kv.metal"
+_THREADGROUP_KERNEL = _KERNEL_DIR / "fast_attention_threadgroup.metal"
 _SPECIALIZED_BASELINE_KERNELS = {
     "baseline_d64": _KERNEL_DIR / "fast_attention_d64.metal",
     "baseline_d128": _KERNEL_DIR / "fast_attention_d128.metal",
 }
 _MAX_HEAD_DIM = 128
+_THREADGROUP_ATTENTION_THREADS = 128
 _ROW_PARALLEL_THREADS = 128
 _TILED_KV_THREADS = 64
 _KV_TILE = 16
@@ -49,6 +51,7 @@ def _make_header(dtype: mx.Dtype, *, max_head_dim: int = _MAX_HEAD_DIM, fixed_he
 using namespace metal;
 #define ELEM_TYPE {elem_type}
 #define MAX_HEAD_DIM {max_head_dim}
+#define TG_THREADS {_THREADGROUP_ATTENTION_THREADS}
 #define KV_TILE {_KV_TILE}
 {fixed_dim_line}
 """
@@ -225,6 +228,29 @@ def _fast_attention_tiled_kv(
     )
 
 
+def _fast_attention_threadgroup(
+    Q: mx.array,
+    K: mx.array,
+    V: mx.array,
+    *,
+    scale: float,
+    causal: bool,
+) -> mx.array:
+    B, Sq, _, H, _ = _validate_qkv(Q, K, V, require_same_sequence=True)
+    total_rows = B * Sq * H
+    return _metal_attention_common(
+        Q,
+        K,
+        V,
+        scale=scale,
+        causal=causal,
+        kernel_path=_THREADGROUP_KERNEL,
+        kernel_name="fast_attention_threadgroup_forward",
+        threadgroup=(_THREADGROUP_ATTENTION_THREADS, 1, 1),
+        grid_x=total_rows * _THREADGROUP_ATTENTION_THREADS,
+    )
+
+
 def _fast_attention_specialized(
     Q: mx.array,
     K: mx.array,
@@ -300,7 +326,9 @@ def fast_attention(
 
     backend_name = backend.lower()
     if backend_name == "auto":
-        if os.environ.get("MLX_METAL_USE_SPECIALIZED", "0") == "1":
+        if os.environ.get("MLX_METAL_USE_THREADGROUP_ATTENTION", "0") == "1":
+            backend_name = "threadgroup"
+        elif os.environ.get("MLX_METAL_USE_SPECIALIZED", "0") == "1":
             if D == 64:
                 backend_name = "baseline_d64"
             elif D == 128:
@@ -320,10 +348,12 @@ def fast_attention(
         return _fast_attention_row_parallel(Q, K, V, scale=scale, causal=causal)
     if backend_name == "tiled_kv":
         return _fast_attention_tiled_kv(Q, K, V, scale=scale, causal=causal)
+    if backend_name == "threadgroup":
+        return _fast_attention_threadgroup(Q, K, V, scale=scale, causal=causal)
     raise ValueError(
         f"Unsupported backend={backend!r}. "
         "Expected one of: 'reference', 'baseline', 'baseline_d64', 'baseline_d128', "
-        "'row_parallel', 'tiled_kv', 'auto'."
+        "'row_parallel', 'tiled_kv', 'threadgroup', 'auto'."
     )
 
 

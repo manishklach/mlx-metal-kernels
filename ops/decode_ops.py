@@ -12,10 +12,12 @@ from .kv_cache_ops import kv_cache_update, normalize_positions, reference_kv_cac
 
 _KERNEL_DIR = Path(__file__).resolve().parent.parent / "kernels"
 _KERNEL_PATH = _KERNEL_DIR / "decode_attention_optimized.metal"
+_KERNEL_PATH_THREADGROUP = _KERNEL_DIR / "decode_attention_threadgroup.metal"
 _SPECIALIZED_KERNELS = {
     "metal_d64": _KERNEL_DIR / "decode_attention_d64.metal",
     "metal_d128": _KERNEL_DIR / "decode_attention_d128.metal",
 }
+_THREADGROUP_THREADS = 128
 
 
 def _make_header(dtype: mx.Dtype, *, max_head_dim: int = 128, fixed_head_dim: int | None = None) -> str:
@@ -31,6 +33,7 @@ def _make_header(dtype: mx.Dtype, *, max_head_dim: int = 128, fixed_head_dim: in
 using namespace metal;
 #define ELEM_TYPE {elem_type}
 #define MAX_HEAD_DIM {max_head_dim}
+#define TG_THREADS {_THREADGROUP_THREADS}
 {fixed_dim_line}
 """
 
@@ -54,6 +57,8 @@ def _get_kernel(kernel_name: str, dtype_name: str, source: str, header: str):
 
 def _resolve_backend(backend_name: str, D: int) -> str:
     if backend_name == "auto":
+        if os.environ.get("MLX_METAL_USE_THREADGROUP_ATTENTION", "0") == "1":
+            return "metal_threadgroup"
         if os.environ.get("MLX_METAL_USE_SPECIALIZED", "0") == "1":
             if D == 64:
                 return "metal_d64"
@@ -149,29 +154,39 @@ def decode_attention(
     backend_name = _resolve_backend(backend.lower(), D)
     if backend_name == "reference":
         return reference_decode_attention(q, K_cache, V_cache, lengths=lengths_arr, scale=scale, causal=causal)
-    if backend_name not in ("metal", "metal_d64", "metal_d128"):
-        raise ValueError("backend must be one of 'reference', 'metal', 'metal_d64', 'metal_d128', 'auto'")
+    if backend_name not in ("metal", "metal_threadgroup", "metal_d64", "metal_d128"):
+        raise ValueError("backend must be one of 'reference', 'metal', 'metal_threadgroup', 'metal_d64', 'metal_d128', 'auto'")
 
     dtype = q.dtype
+    total_rows = B * H
     if backend_name == "metal":
         kernel_path = _KERNEL_PATH
         kernel_name = "decode_attention_optimized_forward"
         header = _make_header(dtype)
+        grid = (total_rows, 1, 1)
+        threadgroup = (1, 1, 1)
+    elif backend_name == "metal_threadgroup":
+        kernel_path = _KERNEL_PATH_THREADGROUP
+        kernel_name = "decode_attention_threadgroup_forward"
+        header = _make_header(dtype)
+        grid = (total_rows * _THREADGROUP_THREADS, 1, 1)
+        threadgroup = (_THREADGROUP_THREADS, 1, 1)
     else:
         kernel_path = _SPECIALIZED_KERNELS[backend_name]
         kernel_name = f"decode_attention_{D}_forward"
         header = _make_header(dtype, fixed_head_dim=D)
+        grid = (total_rows, 1, 1)
+        threadgroup = (1, 1, 1)
     source = _load_source(kernel_path)
     kernel = _get_kernel(kernel_name, str(dtype), source, header)
     meta = mx.array([B, MAX_S, H, D, int(causal)], dtype=mx.int32)
     scale_arr = mx.array([float(scale)], dtype=mx.float32)
-    total_rows = B * H
     return kernel(
         inputs=[q, K_cache.astype(dtype), V_cache.astype(dtype), lengths_arr, meta, scale_arr],
         output_shapes=[(B, 1, H, D)],
         output_dtypes=[dtype],
-        grid=(total_rows, 1, 1),
-        threadgroup=(1, 1, 1),
+        grid=grid,
+        threadgroup=threadgroup,
     )[0]
 
 
