@@ -10,6 +10,10 @@ _KERNEL_PATH = KERNEL_DIR / "kv_cache_update.metal"
 _THREADS = 256
 
 
+def _make_header(dtype: mx.Dtype) -> str:
+    return make_metal_header(dtype)
+
+
 @lru_cache(maxsize=4)
 def _get_kernel(dtype_name: str, source: str, header: str):
     return mx.fast.metal_kernel(

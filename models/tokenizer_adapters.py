@@ -16,6 +16,7 @@ class HFTokenizerAdapter(TokenizerProtocol):
 
     def __init__(self, tokenizer_file: str | Path):
         self.tokenizer_file = str(Path(tokenizer_file).resolve())
+        self._tokenizer_cls = self._lazy_load()
         self._tokenizer: Any = None
         self._bos: int | None = None
         self._eos: int | None = None
@@ -35,8 +36,7 @@ class HFTokenizerAdapter(TokenizerProtocol):
 
     def _get_tokenizer(self):
         if self._tokenizer is None:
-            cls = self._lazy_load()
-            self._tokenizer = cls.from_file(self.tokenizer_file)
+            self._tokenizer = self._tokenizer_cls.from_file(self.tokenizer_file)
         return self._tokenizer
 
     def encode(self, text: str, *, add_special_tokens: bool = True) -> list[int]:

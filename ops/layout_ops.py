@@ -12,6 +12,10 @@ _QKV_SPLIT_ROPE_KERNEL = KERNEL_DIR / "qkv_split_rope.metal"
 _THREADS = 256
 
 
+def _make_header(dtype: mx.Dtype) -> str:
+    return make_metal_header(dtype)
+
+
 @lru_cache(maxsize=8)
 def _get_split_kernel(dtype_name: str, source: str, header: str):
     return mx.fast.metal_kernel(

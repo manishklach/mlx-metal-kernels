@@ -15,6 +15,10 @@ _RMSNORM_RESIDUAL_KERNEL = KERNEL_DIR / "rmsnorm_residual.metal"
 _THREADS = 256
 
 
+def _make_header(dtype: mx.Dtype) -> str:
+    return make_metal_header(dtype)
+
+
 @lru_cache(maxsize=8)
 def _get_qkv_cache_kernel(dtype_name: str, source: str, header: str):
     return mx.fast.metal_kernel(
