@@ -13,6 +13,7 @@ Supported head_dim: <= 128 by default.
 from __future__ import annotations
 
 import math
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -23,13 +24,17 @@ _KERNEL_DIR = Path(__file__).resolve().parent.parent / "kernels"
 _DEFAULT_KERNEL = _KERNEL_DIR / "fast_attention.metal"
 _ROW_PARALLEL_KERNEL = _KERNEL_DIR / "fast_attention_row_parallel.metal"
 _TILED_KV_KERNEL = _KERNEL_DIR / "fast_attention_tiled_kv.metal"
+_SPECIALIZED_BASELINE_KERNELS = {
+    "baseline_d64": _KERNEL_DIR / "fast_attention_d64.metal",
+    "baseline_d128": _KERNEL_DIR / "fast_attention_d128.metal",
+}
 _MAX_HEAD_DIM = 128
 _ROW_PARALLEL_THREADS = 128
 _TILED_KV_THREADS = 64
 _KV_TILE = 16
 
 
-def _make_header(dtype: mx.Dtype, *, max_head_dim: int = _MAX_HEAD_DIM) -> str:
+def _make_header(dtype: mx.Dtype, *, max_head_dim: int = _MAX_HEAD_DIM, fixed_head_dim: int | None = None) -> str:
     """Emit header code shared by MLX custom Metal kernels."""
     if dtype == mx.bfloat16:
         elem_type = "bfloat"
@@ -38,12 +43,14 @@ def _make_header(dtype: mx.Dtype, *, max_head_dim: int = _MAX_HEAD_DIM) -> str:
     else:
         raise TypeError(f"fast_attention supports only float16/bfloat16, got {dtype}")
 
+    fixed_dim_line = f"#define HEAD_DIM {fixed_head_dim}" if fixed_head_dim is not None else ""
     return f"""
 #include <metal_stdlib>
 using namespace metal;
 #define ELEM_TYPE {elem_type}
 #define MAX_HEAD_DIM {max_head_dim}
 #define KV_TILE {_KV_TILE}
+{fixed_dim_line}
 """
 
 
@@ -124,6 +131,7 @@ def _metal_attention_common(
     kernel_name: str,
     threadgroup: tuple[int, int, int],
     grid_x: int,
+    fixed_head_dim: int | None = None,
 ) -> mx.array:
     B, Sq, _, H, D = _validate_qkv(Q, K, V, require_same_sequence=True)
     dtype = Q.dtype
@@ -132,7 +140,7 @@ def _metal_attention_common(
     meta = mx.array([B, Sq, H, D, int(causal)], dtype=mx.int32)
     scale_arr = mx.array([float(scale)], dtype=mx.float32)
     source = _load_kernel_source(kernel_path)
-    header = _make_header(dtype)
+    header = _make_header(dtype, fixed_head_dim=fixed_head_dim)
     kernel = _get_fast_attention_kernel(
         kernel_name,
         str(dtype),
@@ -217,6 +225,34 @@ def _fast_attention_tiled_kv(
     )
 
 
+def _fast_attention_specialized(
+    Q: mx.array,
+    K: mx.array,
+    V: mx.array,
+    *,
+    scale: float,
+    causal: bool,
+    backend_name: str,
+) -> mx.array:
+    B, Sq, _, H, D = _validate_qkv(Q, K, V, require_same_sequence=True)
+    expected_d = 64 if backend_name == "baseline_d64" else 128
+    if D != expected_d:
+        raise ValueError(f"backend={backend_name!r} requires D == {expected_d}, got D={D}")
+    total_rows = B * Sq * H
+    return _metal_attention_common(
+        Q,
+        K,
+        V,
+        scale=scale,
+        causal=causal,
+        kernel_path=_SPECIALIZED_BASELINE_KERNELS[backend_name],
+        kernel_name=f"fast_attention_d{expected_d}_forward",
+        threadgroup=(1, 1, 1),
+        grid_x=total_rows,
+        fixed_head_dim=expected_d,
+    )
+
+
 def fast_attention(
     Q: mx.array,
     K: mx.array,
@@ -264,19 +300,30 @@ def fast_attention(
 
     backend_name = backend.lower()
     if backend_name == "auto":
-        backend_name = "baseline"
+        if os.environ.get("MLX_METAL_USE_SPECIALIZED", "0") == "1":
+            if D == 64:
+                backend_name = "baseline_d64"
+            elif D == 128:
+                backend_name = "baseline_d128"
+            else:
+                backend_name = "baseline"
+        else:
+            backend_name = "baseline"
 
     if backend_name == "reference":
         return reference_attention(Q, K, V, scale=scale, causal=causal)
     if backend_name == "baseline":
         return _fast_attention_baseline(Q, K, V, scale=scale, causal=causal)
+    if backend_name in ("baseline_d64", "baseline_d128"):
+        return _fast_attention_specialized(Q, K, V, scale=scale, causal=causal, backend_name=backend_name)
     if backend_name == "row_parallel":
         return _fast_attention_row_parallel(Q, K, V, scale=scale, causal=causal)
     if backend_name == "tiled_kv":
         return _fast_attention_tiled_kv(Q, K, V, scale=scale, causal=causal)
     raise ValueError(
         f"Unsupported backend={backend!r}. "
-        "Expected one of: 'reference', 'baseline', 'row_parallel', 'tiled_kv', 'auto'."
+        "Expected one of: 'reference', 'baseline', 'baseline_d64', 'baseline_d128', "
+        "'row_parallel', 'tiled_kv', 'auto'."
     )
 
 

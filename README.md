@@ -26,6 +26,7 @@ Longer term, this repo is intended to become an experimental kernel lab for MLX 
 - Quantization: q4/q8 dequantization and correctness-first decode matvec kernels.
 - Paged KV-cache: paged cache allocation, updates, and paged decode attention scaffolds.
 - Fused Decode Block: composition-first contiguous and paged decode helpers from projected QKV tokens.
+- Shape-specialized kernels: experimental D=64 and D=128 attention/decode backends.
 - Future: paged KV, quantized matvec, and tiled attention kernels.
 
 ## Project Goal
@@ -89,6 +90,8 @@ Backends:
 - `auto`: currently aliases to `baseline` until the experimental path is
   consistently validated on Apple Silicon.
 
+Specialized decode and attention backends are opt-in. `auto` stays conservative by default; set `MLX_METAL_USE_SPECIALIZED=1` to route supported `D=64` and `D=128` shapes to the specialized kernels during local experiments.
+
 This is **not yet** a heavily optimized tiled/threadgroup-memory or
 simdgroup-matrix FlashAttention kernel. The baseline path remains the default
 stable backend, and the row-parallel path should be treated as experimental
@@ -123,6 +126,9 @@ python benchmarks/bench_paged_decode_attention.py --B 2 --MAX_S 128 --PAGE_SIZE 
 python benchmarks/bench_paged_decode_loop.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --T 32 --H 8 --D 64 --dtype float16 --backend all
 python benchmarks/bench_decode_block.py --B 2 --MAX_S 128 --T 32 --H 8 --D 64 --dtype float16 --backend all
 python benchmarks/bench_paged_decode_block.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --T 32 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/bench_specialized_decode_attention.py --B 2 --MAX_S 128 --H 8 --D 64 --length 128 --dtype float16 --backend all
+python benchmarks/bench_specialized_paged_decode_attention.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
+python benchmarks/bench_specialized_fast_attention.py --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
 ```
 
 ## Benchmark
@@ -145,6 +151,9 @@ python benchmarks/bench_fused_qkv_rope_cache.py --B 2 --MAX_S 128 --H 8 --D 64 -
 python benchmarks/bench_residual_norm.py --B 2 --S 16 --D 1024 --dtype float16 --backend all
 python benchmarks/bench_decode_block.py --B 2 --MAX_S 128 --T 32 --H 8 --D 64 --dtype float16 --backend all
 python benchmarks/bench_paged_decode_block.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --T 32 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/bench_specialized_decode_attention.py --B 2 --MAX_S 128 --H 8 --D 64 --length 128 --dtype float16 --backend all
+python benchmarks/bench_specialized_paged_decode_attention.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
+python benchmarks/bench_specialized_fast_attention.py --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
 ```
 
 ## API
@@ -170,6 +179,7 @@ V = mx.random.normal((1, 128, 8, 64)).astype(mx.float16)
 O = fast_attention(Q, K, V, causal=True, backend="auto")
 O_exp = fast_attention(Q, K, V, causal=True, backend="row_parallel")
 O_tiled = fast_attention(Q, K, V, causal=True, backend="tiled_kv")
+O_d64 = fast_attention(Q, K, V, causal=False, backend="baseline_d64")
 
 x = mx.random.normal((2, 8, 1024)).astype(mx.float16)
 weight = mx.ones((1024,), dtype=mx.float16)
@@ -194,6 +204,7 @@ v_new = mx.random.normal((1, 1, 8, 64)).astype(mx.float16)
 
 K_cache, V_cache = kv_cache_update(K_cache, V_cache, k_new, v_new, 0)
 O_decode = decode_attention(q, K_cache, V_cache, lengths=1, backend="auto")
+O_decode_d64 = decode_attention(q, K_cache, V_cache, lengths=1, backend="metal_d64")
 O_step, K_cache, V_cache = decode_step(q, k_new, v_new, K_cache, V_cache, 1, backend="auto")
 
 packed_qkv = mx.random.normal((1, 1, 3 * 8 * 64)).astype(mx.float16)
@@ -217,6 +228,7 @@ PAGE_SIZE = 4
 K_pages, V_pages, block_table = allocate_paged_kv_cache(1, MAX_S, 8, 64, PAGE_SIZE, dtype=mx.float16)
 K_pages, V_pages = paged_kv_cache_update(K_pages, V_pages, k_new, v_new, block_table, 0)
 out_paged = paged_decode_attention(q, K_pages, V_pages, block_table, lengths=1, backend="auto")
+out_paged_d64 = paged_decode_attention(q, K_pages, V_pages, block_table, lengths=1, backend="metal_d64")
 out_step, K_pages, V_pages = paged_decode_step(q, k_new, v_new, K_pages, V_pages, block_table, 1, backend="auto")
 out_block, K_cache, V_cache = decode_block_from_qkv(packed_qkv, K_cache, V_cache, cos, sin, 4, H=8, D=64, backend="auto")
 out_paged_block, K_pages, V_pages = paged_decode_block_from_qkv(
@@ -252,6 +264,7 @@ python benchmarks/bench_paged_decode_loop.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --
 5. `simdgroup_matrix` QK/PV kernel.
 6. Specialized `D=64` and `D=128` kernels.
 7. Decode / paged-KV path.
+8. Experimental specialized decode/paged-decode kernels.
 
 ## What this project is not claiming yet
 

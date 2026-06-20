@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -9,39 +10,61 @@ import mlx.core as mx
 
 from .kv_cache_ops import kv_cache_update, normalize_positions, reference_kv_cache_update
 
-_KERNEL_PATH = Path(__file__).resolve().parent.parent / "kernels" / "decode_attention_optimized.metal"
+_KERNEL_DIR = Path(__file__).resolve().parent.parent / "kernels"
+_KERNEL_PATH = _KERNEL_DIR / "decode_attention_optimized.metal"
+_SPECIALIZED_KERNELS = {
+    "metal_d64": _KERNEL_DIR / "decode_attention_d64.metal",
+    "metal_d128": _KERNEL_DIR / "decode_attention_d128.metal",
+}
 
 
-def _make_header(dtype: mx.Dtype, *, max_head_dim: int = 128) -> str:
+def _make_header(dtype: mx.Dtype, *, max_head_dim: int = 128, fixed_head_dim: int | None = None) -> str:
     if dtype == mx.bfloat16:
         elem_type = "bfloat"
     elif dtype == mx.float16:
         elem_type = "half"
     else:
         raise TypeError(f"decode_attention supports only float16/bfloat16, got {dtype}")
+    fixed_dim_line = f"#define HEAD_DIM {fixed_head_dim}" if fixed_head_dim is not None else ""
     return f"""
 #include <metal_stdlib>
 using namespace metal;
 #define ELEM_TYPE {elem_type}
 #define MAX_HEAD_DIM {max_head_dim}
+{fixed_dim_line}
 """
 
 
-def _load_source() -> str:
-    if not _KERNEL_PATH.exists():
-        raise FileNotFoundError(f"Missing Metal kernel source: {_KERNEL_PATH}")
-    return _KERNEL_PATH.read_text()
+def _load_source(path: Path) -> str:
+    if not path.exists():
+        raise FileNotFoundError(f"Missing Metal kernel source: {path}")
+    return path.read_text()
 
 
 @lru_cache(maxsize=4)
-def _get_kernel(dtype_name: str, source: str, header: str):
+def _get_kernel(kernel_name: str, dtype_name: str, source: str, header: str):
     return mx.fast.metal_kernel(
-        name="decode_attention_optimized_forward",
+        name=kernel_name,
         input_names=["q", "K_cache", "V_cache", "lengths", "meta", "scale"],
         output_names=["out"],
         source=source,
         header=header,
     )
+
+
+def _resolve_backend(backend_name: str, D: int) -> str:
+    if backend_name == "auto":
+        if os.environ.get("MLX_METAL_USE_SPECIALIZED", "0") == "1":
+            if D == 64:
+                return "metal_d64"
+            if D == 128:
+                return "metal_d128"
+        return "metal"
+    if backend_name == "metal_d64" and D != 64:
+        raise ValueError(f"backend='metal_d64' requires D == 64, got D={D}")
+    if backend_name == "metal_d128" and D != 128:
+        raise ValueError(f"backend='metal_d128' requires D == 128, got D={D}")
+    return backend_name
 
 
 def _validate_inputs(
@@ -123,18 +146,23 @@ def decode_attention(
     if scale is None:
         scale = 1.0 / math.sqrt(D)
 
-    backend_name = backend.lower()
-    if backend_name == "auto":
-        backend_name = "metal"
+    backend_name = _resolve_backend(backend.lower(), D)
     if backend_name == "reference":
         return reference_decode_attention(q, K_cache, V_cache, lengths=lengths_arr, scale=scale, causal=causal)
-    if backend_name != "metal":
-        raise ValueError("backend must be one of 'reference', 'metal', 'auto'")
+    if backend_name not in ("metal", "metal_d64", "metal_d128"):
+        raise ValueError("backend must be one of 'reference', 'metal', 'metal_d64', 'metal_d128', 'auto'")
 
     dtype = q.dtype
-    source = _load_source()
-    header = _make_header(dtype)
-    kernel = _get_kernel(str(dtype), source, header)
+    if backend_name == "metal":
+        kernel_path = _KERNEL_PATH
+        kernel_name = "decode_attention_optimized_forward"
+        header = _make_header(dtype)
+    else:
+        kernel_path = _SPECIALIZED_KERNELS[backend_name]
+        kernel_name = f"decode_attention_{D}_forward"
+        header = _make_header(dtype, fixed_head_dim=D)
+    source = _load_source(kernel_path)
+    kernel = _get_kernel(kernel_name, str(dtype), source, header)
     meta = mx.array([B, MAX_S, H, D, int(causal)], dtype=mx.int32)
     scale_arr = mx.array([float(scale)], dtype=mx.float32)
     total_rows = B * H

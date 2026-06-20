@@ -17,9 +17,10 @@
 5. v0.5 Quantization + decode matvec kernels
 6. v0.6 Paged KV-cache + paged decode attention
 7. v0.7 Fused decode block
-8. v0.8 shape-specialized attention/decode kernels
+8. v0.8 Shape-specialized attention/decode kernels
 9. v0.9 optimized q4/q8 matvec reductions
-10. v1.0 benchmark suite across Apple chips
+10. v0.10 benchmark suite across Apple chips
+11. v1.0 stable experimental kernel suite
 
 ## v0.2: Transformer primitives
 
@@ -61,6 +62,8 @@
 ## v0.8: Shape-specialized attention/decode kernels
 
 - Add D=64 / D=128 specialized attention and decode kernels.
+- Keep specialized dispatch explicit and conservative by default.
+- Add generic-vs-specialized benchmark coverage for decode, paged decode, and full attention.
 
 ## v0.9: Optimized q4/q8 matvec reductions
 
