@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>No kernel ships until it can prove it's right — mlx-metal-kernels field notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0B0D0C;
+    --bg2:#131715;
+    --panel:#171C19;
+    --ink:#E9E6DC;
+    --ink-dim:#8C9389;
+    --ink-faint:#5B615A;
+    --line:#2B312D;
+    --accent:#FF9E2C;
+    --accent-dim:#7A5320;
+    --verify:#6FD17E;
+    --verify-dim:#2E4A33;
+    --void:#D45A36;
+    --void-dim:#5C2E20;
+    --max:1040px;
+    --maxtext:700px;
+  }
+
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:'IBM Plex Sans', sans-serif;
+    font-size:16px;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    position:relative;
+  }
+
+  body::before{
+    content:"";
+    position:fixed;
+    inset:0;
+    pointer-events:none;
+    background-image:
+      repeating-linear-gradient(0deg, rgba(140,147,137,0.05) 0, rgba(140,147,137,0.05) 1px, transparent 1px, transparent 32px),
+      repeating-linear-gradient(90deg, rgba(140,147,137,0.05) 0, rgba(140,147,137,0.05) 1px, transparent 1px, transparent 32px);
+    z-index:0;
+  }
+
+  .mono{font-family:'IBM Plex Mono', monospace;}
+
+  a{color:var(--accent);}
+  a:focus-visible, button:focus-visible, .card:focus-visible{
+    outline:2px solid var(--accent);
+    outline-offset:3px;
+  }
+
+  /* ---------- layout shells ---------- */
+  .wrap{max-width:var(--max); margin:0 auto; padding:0 28px; position:relative; z-index:1;}
+  .prose{max-width:var(--maxtext);}
+
+  section{padding:96px 0;}
+  section + section{border-top:1px solid var(--line);}
+
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12.5px;
+    letter-spacing:0.14em;
+    text-transform:uppercase;
+    color:var(--ink-faint);
+    margin:0 0 18px;
+  }
+  .eyebrow b{color:var(--accent); font-weight:600;}
+
+  h2{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:clamp(22px,3vw,30px);
+    font-weight:600;
+    letter-spacing:-0.01em;
+    margin:0 0 22px;
+    color:var(--ink);
+  }
+
+  p{color:var(--ink-dim); margin:0 0 16px;}
+  p:last-child{margin-bottom:0;}
+  strong{color:var(--ink); font-weight:600;}
+
+  /* ---------- reveal-on-scroll, motion-safe only ---------- */
+  @media (prefers-reduced-motion: no-preference){
+    .reveal{opacity:0; transform:translateY(18px); transition:opacity .7s ease, transform .7s ease;}
+    .reveal.is-visible{opacity:1; transform:translateY(0);}
+  }
+
+  /* ---------- trace divider ---------- */
+  .trace{display:block; width:100%; height:28px; margin:8px 0 0; opacity:0.55;}
+  .trace path{stroke:var(--verify); stroke-width:1.4; fill:none;}
+  @media (prefers-reduced-motion: no-preference){
+    .trace path{stroke-dasharray:6 5; animation:dash 9s linear infinite;}
+    @keyframes dash{to{stroke-dashoffset:-220;}}
+  }
+
+  /* ---------- datasheet bar ---------- */
+  .datasheet-bar{
+    display:flex; flex-wrap:wrap; gap:10px 28px;
+    border:1px solid var(--line);
+    background:var(--panel);
+    padding:14px 20px;
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12.5px;
+    color:var(--ink-dim);
+    margin-bottom:46px;
+  }
+  .datasheet-bar span b{color:var(--ink); font-weight:600;}
+  .datasheet-bar .status{margin-left:auto; color:var(--verify);}
+
+  /* ---------- hero ---------- */
+  .hero{padding:64px 0 80px;}
+  .hero-grid{display:grid; grid-template-columns:1.5fr 1fr; gap:48px; align-items:start;}
+
+  h1{
+    font-family:'IBM Plex Mono', monospace;
+    font-weight:700;
+    font-size:clamp(34px,5.2vw,58px);
+    line-height:1.06;
+    letter-spacing:-0.015em;
+    margin:0 0 26px;
+    color:var(--ink);
+  }
+
+  .lede{font-size:18px; color:var(--ink-dim); max-width:560px; margin:0 0 34px;}
+
+  .cta-row{display:flex; flex-wrap:wrap; gap:14px;}
+  .btn{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:13.5px;
+    letter-spacing:0.04em;
+    text-decoration:none;
+    padding:13px 20px;
+    border:1px solid var(--line);
+    color:var(--ink);
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    transition:border-color .2s ease, color .2s ease;
+  }
+  .btn:hover{border-color:var(--accent); color:var(--accent);}
+  .btn.primary{background:var(--accent); color:#1A1206; border-color:var(--accent); font-weight:600;}
+  .btn.primary:hover{background:#FFB654; color:#1A1206;}
+
+  .stamp{
+    font-family:'IBM Plex Mono', monospace;
+    font-weight:700;
+    font-size:12px;
+    letter-spacing:0.12em;
+    text-transform:uppercase;
+    color:var(--accent);
+    border:1.5px dashed var(--accent-dim);
+    padding:14px 16px;
+    display:inline-block;
+    transform:rotate(-3deg);
+    line-height:1.5;
+  }
+  .stamp small{display:block; color:var(--ink-faint); font-weight:500; letter-spacing:0.06em; margin-top:4px;}
+
+  .hero-side{justify-self:end; display:flex; flex-direction:column; gap:22px; align-items:flex-start; padding-top:6px;}
+
+  /* ---------- legend ---------- */
+  .legend{display:flex; flex-wrap:wrap; gap:18px; font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink-faint); margin:-6px 0 32px;}
+  .legend i{display:inline-block; width:9px; height:9px; margin-right:7px; border:1px solid currentColor; vertical-align:middle;}
+  .legend .c-verify i{background:var(--verify); border-color:var(--verify); color:var(--verify);}
+  .legend .c-accent i{background:var(--accent); border-color:var(--accent); color:var(--accent);}
+  .legend .c-void i{background:var(--void); border-color:var(--void); color:var(--void);}
+
+  /* ---------- diagram ---------- */
+  .diagram-frame{border:1px solid var(--line); background:var(--panel); padding:18px; margin:34px 0 14px;}
+  .diagram-frame svg{width:100%; height:auto; display:block;}
+  .diagram-cap{font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink-faint); margin:0;}
+
+  /* ---------- kernel family cards ---------- */
+  .card-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:1px; background:var(--line); border:1px solid var(--line); margin-top:8px;}
+  .card{background:var(--panel); padding:24px 22px 22px; display:flex; flex-direction:column;}
+  .card-head{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:14px; gap:10px;}
+  .card-pin{font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ink-faint); letter-spacing:0.1em;}
+  .card-title{font-family:'IBM Plex Mono',monospace; font-size:15px; font-weight:600; color:var(--ink); margin:4px 0 0;}
+  .tag{font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:0.08em; text-transform:uppercase; padding:3px 8px; border:1px solid; white-space:nowrap; height:fit-content;}
+  .tag.core{color:var(--verify); border-color:var(--verify-dim);}
+  .tag.exp{color:var(--accent); border-color:var(--accent-dim);}
+  .card ul{margin:0; padding:0; list-style:none; flex:1;}
+  .card li{
+    font-size:13.5px; color:var(--ink-dim);
+    padding:7px 0 7px 16px;
+    border-top:1px solid var(--line);
+    position:relative;
+  }
+  .card li:first-child{border-top:none;}
+  .card li::before{content:"–"; position:absolute; left:0; color:var(--ink-faint);}
+
+  /* ---------- workflow ---------- */
+  .steps{margin-top:8px;}
+  .step{display:grid; grid-template-columns:64px 1fr; gap:22px; padding:22px 0; border-top:1px solid var(--line);}
+  .step:first-child{border-top:none;}
+  .step-index{font-family:'IBM Plex Mono',monospace; font-size:13px; color:var(--verify); padding-top:2px;}
+  .step h3{font-family:'IBM Plex Mono',monospace; font-size:16px; font-weight:600; margin:0 0 6px; color:var(--ink);}
+  .step p{margin:0; font-size:14.5px;}
+
+  /* ---------- out of scope ---------- */
+  .void-panel{border:1px solid var(--void-dim); background:rgba(212,90,54,0.05); padding:8px 28px; margin-top:8px;}
+  .void-item{display:flex; gap:14px; padding:16px 0; border-top:1px dashed var(--void-dim); align-items:flex-start;}
+  .void-item:first-child{border-top:none;}
+  .void-mark{font-family:'IBM Plex Mono',monospace; color:var(--void); font-weight:700; font-size:14px; line-height:1.5;}
+  .void-item p{margin:0; font-size:14.5px; color:var(--ink-dim);}
+  .void-close{margin-top:24px; font-style:italic; color:var(--ink-faint); font-size:14.5px;}
+
+  /* ---------- roadmap ---------- */
+  .open-box{border:1px solid var(--accent-dim); background:rgba(255,158,44,0.06); padding:22px 24px; margin-bottom:32px;}
+  .open-box .eyebrow2{font-family:'IBM Plex Mono',monospace; font-size:11.5px; letter-spacing:0.1em; color:var(--accent); margin:0 0 12px; text-transform:uppercase;}
+  .open-row{display:flex; gap:12px; align-items:baseline; font-family:'IBM Plex Mono',monospace; font-size:14px; color:var(--ink); padding:5px 0;}
+  .box{width:13px; height:13px; border:1.5px solid var(--accent); display:inline-block; flex:none;}
+
+  .checklist{columns:2; column-gap:32px; margin-top:4px;}
+  @media (max-width:640px){.checklist{columns:1;}}
+  .check-row{display:flex; gap:10px; align-items:baseline; font-size:13px; color:var(--ink-faint); padding:5px 0; break-inside:avoid;}
+  .check-row .box{border-color:var(--verify-dim); position:relative;}
+  .check-row .box::after{content:"✓"; position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:10px; color:var(--verify); top:-2px;}
+
+  /* ---------- terminal ---------- */
+  .terminal{border:1px solid var(--line); background:#0E1110; margin-top:8px;}
+  .terminal-bar{display:flex; align-items:center; justify-content:space-between; padding:9px 16px; border-bottom:1px solid var(--line); font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--ink-faint); letter-spacing:0.05em;}
+  .terminal pre{margin:0; padding:20px; overflow-x:auto; font-family:'IBM Plex Mono',monospace; font-size:13.5px; line-height:1.75; color:var(--ink);}
+  .terminal .p{color:var(--verify);}
+  .terminal .c{color:var(--ink-faint);}
+
+  .panels-2{display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-top:24px;}
+  @media (max-width:760px){.panels-2{grid-template-columns:1fr;}}
+
+  /* ---------- footer ---------- */
+  footer{padding:64px 0 80px;}
+  .tags-row{display:flex; flex-wrap:wrap; gap:8px; margin:24px 0 36px;}
+  .pill{font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--ink-faint); border:1px solid var(--line); padding:5px 11px;}
+  .foot-line{display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px; font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink-faint); border-top:1px solid var(--line); padding-top:24px;}
+
+  /* ---------- responsive ---------- */
+  @media (max-width:860px){
+    .hero-grid{grid-template-columns:1fr;}
+    .hero-side{justify-self:start;}
+    .card-grid{grid-template-columns:1fr 1fr;}
+  }
+  @media (max-width:560px){
+    section{padding:64px 0;}
+    .card-grid{grid-template-columns:1fr;}
+    .step{grid-template-columns:1fr; gap:6px;}
+  }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="trace-path" viewBox="0 0 1000 28">
+      <path d="M0,14 L120,14 L138,4 L156,24 L174,14 L430,14 L448,6 L466,22 L484,14 L760,14 L778,5 L796,23 L814,14 L1000,14"/>
+    </symbol>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M2 1L8 5L2 9" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+</svg>
+
+<main class="wrap">
+
+  <!-- ================= HERO ================= -->
+  <header class="hero">
+    <div class="datasheet-bar">
+      <span>PART&nbsp; <b>mlx-metal-kernels</b></span>
+      <span>REV&nbsp; <b>v0.19.0</b></span>
+      <span>LANG&nbsp; <b>Python 91% · Metal 9%</b></span>
+      <span>TARGET&nbsp; <b>Apple Silicon / MLX</b></span>
+      <span class="status">● STATUS: EXPERIMENTAL</span>
+    </div>
+
+    <div class="hero-grid">
+      <div>
+        <p class="eyebrow">Field notes <b>//</b> Apple Silicon kernel lab</p>
+        <h1>No kernel ships<br>until it can prove<br>it's right.</h1>
+        <p class="lede">
+          <strong>mlx-metal-kernels</strong> is an experimental library of hand-written Metal kernels
+          for MLX on Apple Silicon — streaming attention, paged KV-caches, quantized matvec, fused
+          decode blocks. Every optimized backend is built next to a plain MLX reference path and has
+          to match it, within tolerance, before it's allowed anywhere near a benchmark.
+        </p>
+        <div class="cta-row">
+          <a class="btn primary" href="https://github.com/manishklach/mlx-metal-kernels" target="_blank" rel="noopener">View the repo ↗</a>
+          <a class="btn" href="#try">Read the quick start ↓</a>
+        </div>
+      </div>
+      <div class="hero-side">
+        <span class="stamp">Correctness first<small>verify, then optimize</small></span>
+        <svg class="trace" viewBox="0 0 1000 28" preserveAspectRatio="none"><use href="#trace-path"/></svg>
+      </div>
+    </div>
+  </header>
+
+  <!-- ================= 01 WHY ================= -->
+  <section class="reveal" id="why">
+    <p class="eyebrow">01 <b>/</b> Why hand-write kernels at all</p>
+    <h2>MLX gets you most of the way there.<br>Decode is the part that's left.</h2>
+    <div class="prose">
+      <p>
+        MLX already gives Apple Silicon a serious array framework — autograd, lazy evaluation,
+        unified memory, all handled for you. For most workloads that's genuinely enough, and
+        reaching for custom kernels would be premature.
+      </p>
+      <p>
+        Token-by-token decoding is a different animal. Batches are small, matvecs are tiny, the
+        workload is latency-bound rather than throughput-bound, and almost every gain comes from
+        a memory-layout decision: how a KV-cache pages, how a quantized weight gets packed, how
+        far a streaming softmax can be pushed before precision quietly falls apart. Those are
+        exactly the places a general-purpose op library leaves performance sitting on the table —
+        and exactly where this repo lives, one primitive at a time.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================= 02 ARCHITECTURE ================= -->
+  <section class="reveal" id="architecture">
+    <p class="eyebrow">02 <b>/</b> How a call gets to silicon</p>
+    <h2>Five layers down, one verification path running alongside the whole way.</h2>
+    <p class="prose">
+      Every call — attention, decode, a quantized matvec — takes the same route: through the
+      Python ops layer, into a backend router that knows which kernels have actually earned
+      trust on this machine, and down into hand-written Metal. A parallel, plain-MLX reference
+      path shadows every step and feeds the test suite that gates anything from being benchmarked.
+    </p>
+
+    <div class="diagram-frame">
+      <svg viewBox="0 0 680 540" role="img" aria-labelledby="diagram-title diagram-desc">
+        <title id="diagram-title">mlx-metal-kernels architecture</title>
+        <desc id="diagram-desc">A Python model and ops layer routes through a backend autotuner into hand-written Metal kernels on Apple GPU, while a parallel pure-MLX reference path verifies correctness and feeds the test suite.</desc>
+
+        <line x1="210" y1="94" x2="210" y2="134" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+        <line x1="210" y1="198" x2="210" y2="238" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+        <line x1="210" y1="302" x2="210" y2="342" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+        <line x1="210" y1="406" x2="210" y2="446" stroke="var(--line)" stroke-width="1.5" marker-end="url(#arrow)"/>
+        <line x1="360" y1="166" x2="400" y2="218" stroke="var(--verify)" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+        <line x1="500" y1="250" x2="500" y2="310" stroke="var(--verify)" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#arrow)"/>
+
+        <g>
+          <rect x="60" y="30" width="300" height="64" fill="var(--bg2)" stroke="var(--line)" stroke-width="1"/>
+          <text x="80" y="54" font-family="IBM Plex Mono, monospace" font-size="15" font-weight="600" fill="var(--ink)">MODEL &amp; GENERATION</text>
+          <text x="80" y="74" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--ink-faint)">config, tokenizer, sampling</text>
+        </g>
+        <g>
+          <rect x="60" y="134" width="300" height="64" fill="var(--bg2)" stroke="var(--line)" stroke-width="1"/>
+          <text x="80" y="158" font-family="IBM Plex Mono, monospace" font-size="15" font-weight="600" fill="var(--ink)">OPS LAYER</text>
+          <text x="80" y="178" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--ink-faint)">attention, decode, quant, norm</text>
+        </g>
+        <g>
+          <rect x="60" y="238" width="300" height="64" fill="var(--bg2)" stroke="var(--accent-dim)" stroke-width="1.5"/>
+          <text x="80" y="262" font-family="IBM Plex Mono, monospace" font-size="15" font-weight="600" fill="var(--accent)">AUTOTUNE ROUTER</text>
+          <text x="80" y="282" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--ink-faint)">picks the verified-fast backend</text>
+        </g>
+        <g>
+          <rect x="60" y="342" width="300" height="64" fill="var(--bg2)" stroke="var(--line)" stroke-width="1"/>
+          <text x="80" y="366" font-family="IBM Plex Mono, monospace" font-size="15" font-weight="600" fill="var(--ink)">METAL KERNELS</text>
+          <text x="80" y="386" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--ink-faint)">kernels/*.metal</text>
+        </g>
+        <g>
+          <rect x="60" y="446" width="300" height="64" fill="var(--bg2)" stroke="var(--line)" stroke-width="1"/>
+          <text x="80" y="470" font-family="IBM Plex Mono, monospace" font-size="15" font-weight="600" fill="var(--ink)">APPLE GPU</text>
+          <text x="80" y="490" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--ink-faint)">unified memory</text>
+        </g>
+
+        <g>
+          <rect x="400" y="186" width="220" height="64" fill="none" stroke="var(--verify-dim)" stroke-width="1.4" stroke-dasharray="4 3"/>
+          <text x="420" y="210" font-family="IBM Plex Mono, monospace" font-size="14" font-weight="600" fill="var(--verify)">REFERENCE PATH</text>
+          <text x="420" y="230" font-family="IBM Plex Mono, monospace" font-size="11.5" fill="var(--ink-faint)">must match, every time</text>
+        </g>
+        <g>
+          <rect x="400" y="310" width="220" height="64" fill="none" stroke="var(--verify-dim)" stroke-width="1.4"/>
+          <text x="420" y="334" font-family="IBM Plex Mono, monospace" font-size="14" font-weight="600" fill="var(--verify)">TEST SUITE</text>
+          <text x="420" y="354" font-family="IBM Plex Mono, monospace" font-size="11.5" fill="var(--ink-faint)">gates every benchmark</text>
+        </g>
+      </svg>
+    </div>
+    <p class="diagram-cap">solid path = the live call · dashed green = correctness verification</p>
+  </section>
+
+  <!-- ================= 03 KERNEL FAMILIES ================= -->
+  <section class="reveal" id="kernels">
+    <p class="eyebrow">03 <b>/</b> What's actually in the lab</p>
+    <h2>Six families of primitives, built bottom-up.</h2>
+    <div class="legend">
+      <span class="c-verify"><i></i>core — stable default</span>
+      <span class="c-accent"><i></i>experimental — explicit opt-in only</span>
+    </div>
+
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-head">
+          <div><div class="card-pin">PIN 01</div><div class="card-title">Attention</div></div>
+          <span class="tag exp">mixed</span>
+        </div>
+        <ul>
+          <li>Reference MLX attention</li>
+          <li>Baseline streaming attention</li>
+          <li>Row-parallel attention</li>
+          <li>Tiled K/V attention</li>
+          <li>Threadgroup attention v2</li>
+          <li>Shape-specialized D=64 / D=128</li>
+          <li>Experimental simdgroup_d64</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div><div class="card-pin">PIN 02</div><div class="card-title">Decode &amp; KV-cache</div></div>
+          <span class="tag core">core</span>
+        </div>
+        <ul>
+          <li>Contiguous KV-cache update</li>
+          <li>Decode attention</li>
+          <li>Paged KV-cache + paged decode</li>
+          <li>Fused decode blocks from QKV</li>
+          <li>GQA / MQA decode composition</li>
+          <li>GQA / MQA prefill attention</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div><div class="card-pin">PIN 03</div><div class="card-title">Transformer primitives</div></div>
+          <span class="tag core">core</span>
+        </div>
+        <ul>
+          <li>RMSNorm</li>
+          <li>RoPE</li>
+          <li>SwiGLU</li>
+          <li>Residual add, RMSNorm + residual</li>
+          <li>QKV split, QKV split + RoPE</li>
+          <li>QKV + RoPE + cache update</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div><div class="card-pin">PIN 04</div><div class="card-title">Quantization</div></div>
+          <span class="tag exp">mixed</span>
+        </div>
+        <ul>
+          <li>q4 / q8 dequantization</li>
+          <li>q4 / q8 decode matvec</li>
+          <li>Parallel + tiled multi-output matvec</li>
+          <li>Quantized QKV / output projection</li>
+          <li>Quantized decode block, MLP block</li>
+          <li>Experimental fused q4/q8 MLP</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div><div class="card-pin">PIN 05</div><div class="card-title">Model scaffolding</div></div>
+          <span class="tag exp">scaffold</span>
+        </div>
+        <ul>
+          <li>Toy transformer-layer decode bench</li>
+          <li>Full Llama-like decode-layer experiment</li>
+          <li>Multi-layer decode stack</li>
+          <li>Llama-like config + weight-layout mapping</li>
+          <li>Model-adapter scaffold</li>
+          <li>GQA / MQA utilities</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <div><div class="card-pin">PIN 06</div><div class="card-title">Benchmarking &amp; autotune</div></div>
+          <span class="tag core">core</span>
+        </div>
+        <ul>
+          <li>Unified benchmark runner</li>
+          <li>Local report generator</li>
+          <li>Chip-specific backend registry</li>
+          <li>Local autotune cache</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 04 WORKFLOW ================= -->
+  <section class="reveal" id="workflow">
+    <p class="eyebrow">04 <b>/</b> The rule that governs everything</p>
+    <h2>Nothing skips this order — not even the fast stuff.</h2>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-index mono">STEP 1/6</div>
+        <div><h3>Write the reference path</h3><p>Every operation starts as plain, boring, obviously-correct MLX code. No Metal, no cleverness — just the right answer.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-index mono">STEP 2/6</div>
+        <div><h3>Add a correctness-first Metal backend</h3><p>The first hand-written kernel doesn't have to be fast. It has to match step one, within dtype-appropriate tolerance.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-index mono">STEP 3/6</div>
+        <div><h3>Test it against the reference</h3><p>Random inputs, every time a backend changes — not a one-off check that gets forgotten once a kernel "works."</p></div>
+      </div>
+      <div class="step">
+        <div class="step-index mono">STEP 4/6</div>
+        <div><h3>Only then, optimize</h3><p>Row-parallel, tiled, threadgroup, simdgroup — each variant ships as an explicit, opt-in experiment, never a silent default.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-index mono">STEP 5/6</div>
+        <div><h3>Benchmark locally</h3><p>Numbers come from this machine, this chip, this MLX version — never assumed, never carried over from somewhere else.</p></div>
+      </div>
+      <div class="step">
+        <div class="step-index mono">STEP 6/6</div>
+        <div><h3>Pick a backend on purpose</h3><p>Explicit flags by default. An opt-in autotuner can choose machine-specific defaults — but only for backends that have earned it.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 05 OUT OF SCOPE ================= -->
+  <section class="reveal" id="scope">
+    <p class="eyebrow">05 <b>/</b> What this deliberately isn't</p>
+    <h2>Scope discipline is a feature, not a disclaimer.</h2>
+    <p class="prose">The project says no to a long list of things it could chase. On purpose.</p>
+
+    <div class="void-panel">
+      <div class="void-item"><span class="void-mark">✕</span><p>A production inference engine, full stop — this is a kernel lab, not a serving stack.</p></div>
+      <div class="void-item"><span class="void-mark">✕</span><p>GPTQ, AWQ, or SmoothQuant — no calibrated, model-quality-preserving quantization here, only correctness-first packaging.</p></div>
+      <div class="void-item"><span class="void-mark">✕</span><p>Hugging Face hub downloads or automatic tokenizer loading — everything stays local and dependency-light.</p></div>
+      <div class="void-item"><span class="void-mark">✕</span><p>A complete checkpoint-to-served-model pipeline, or production safetensors conversion.</p></div>
+      <div class="void-item"><span class="void-mark">✕</span><p>Any performance claim that doesn't come with a benchmark script and a machine it was measured on.</p></div>
+    </div>
+    <p class="void-close">Every one of those is a real, useful project. None of them is this one — yet.</p>
+  </section>
+
+  <!-- ================= 06 ROADMAP ================= -->
+  <section class="reveal" id="roadmap">
+    <p class="eyebrow">06 <b>/</b> Sign-off sheet</p>
+    <h2>Twenty items shipped. Two left on the bench.</h2>
+
+    <div class="open-box">
+      <p class="eyebrow2">In progress</p>
+      <div class="open-row"><span class="box"></span> Optimized GQA Metal decode attention</div>
+      <div class="open-row"><span class="box"></span> Fused q4 MLP kernel</div>
+    </div>
+
+    <div class="checklist">
+      <div class="check-row"><span class="box"></span> Baseline MLX custom Metal attention</div>
+      <div class="check-row"><span class="box"></span> Reference correctness path</div>
+      <div class="check-row"><span class="box"></span> Row-parallel &amp; tiled K/V attention</div>
+      <div class="check-row"><span class="box"></span> RMSNorm, RoPE, SwiGLU, residual</div>
+      <div class="check-row"><span class="box"></span> KV-cache update &amp; decode attention</div>
+      <div class="check-row"><span class="box"></span> Paged KV-cache &amp; paged decode</div>
+      <div class="check-row"><span class="box"></span> Fused decode block helpers</div>
+      <div class="check-row"><span class="box"></span> q4/q8 dequant &amp; decode matvec</div>
+      <div class="check-row"><span class="box"></span> Parallel &amp; tiled q4/q8 matvec</div>
+      <div class="check-row"><span class="box"></span> Quantized decode block</div>
+      <div class="check-row"><span class="box"></span> Threadgroup attention v2</div>
+      <div class="check-row"><span class="box"></span> Simdgroup attention experiments</div>
+      <div class="check-row"><span class="box"></span> Unified benchmark &amp; report suite</div>
+      <div class="check-row"><span class="box"></span> Chip-specific autotuning</div>
+      <div class="check-row"><span class="box"></span> Toy transformer-layer decode bench</div>
+      <div class="check-row"><span class="box"></span> Llama-like model integration scaffold</div>
+      <div class="check-row"><span class="box"></span> Quantized MLP block</div>
+      <div class="check-row"><span class="box"></span> GQA / MQA support</div>
+      <div class="check-row"><span class="box"></span> Checkpoint layout loader scaffold</div>
+      <div class="check-row"><span class="box"></span> Real checkpoint adapter scaffold</div>
+    </div>
+  </section>
+
+  <!-- ================= 07 TRY IT ================= -->
+  <section class="reveal" id="try">
+    <p class="eyebrow">07 <b>/</b> Run it yourself</p>
+    <h2>It's a real, installable Python package — go break it.</h2>
+
+    <div class="panels-2">
+      <div class="terminal">
+        <div class="terminal-bar"><span>zsh — apple-silicon</span><span>mlx-metal-kernels</span></div>
+        <pre><span class="p">$</span> pip install mlx pytest
+<span class="p">$</span> pip install -e .
+<span class="p">$</span> pytest tests -q
+<span class="c"># every backend re-checked against its reference path</span>
+<span class="p">$</span> python examples/run_basic.py</pre>
+      </div>
+
+      <div class="terminal">
+        <div class="terminal-bar"><span>attention_demo.py</span><span>python</span></div>
+        <pre><span class="c">import mlx.core as mx
+from ops.attention_ops import fast_attention</span>
+
+Q = mx.random.normal((1, 128, 8, 64)).astype(mx.float16)
+K = mx.random.normal((1, 128, 8, 64)).astype(mx.float16)
+V = mx.random.normal((1, 128, 8, 64)).astype(mx.float16)
+
+O = fast_attention(Q, K, V, causal=<span class="p">True</span>, backend=<span class="p">"auto"</span>)</pre>
+      </div>
+    </div>
+
+    <p class="prose" style="margin-top:28px;">
+      No performance numbers are quoted here on purpose — the project's own rule is that a
+      speedup only counts once it's measured on a specific Apple Silicon machine, with the
+      benchmark script that produced it sitting right next to the claim. Run the suite, read
+      <code class="mono">docs/</code>, and see what your own chip says.
+    </p>
+  </section>
+
+  <!-- ================= FOOTER ================= -->
+  <footer>
+    <p class="eyebrow">08 <b>/</b> Repository</p>
+    <h2>github.com/manishklach/mlx-metal-kernels</h2>
+    <p class="prose">Open the issues, read the roadmap, or clone it and point your own Mac at the benchmark suite. Forks, correctness bugs, and new backends are exactly what this kind of lab is for.</p>
+    <div class="cta-row" style="margin-top:24px;">
+      <a class="btn primary" href="https://github.com/manishklach/mlx-metal-kernels" target="_blank" rel="noopener">Open the repo ↗</a>
+    </div>
+
+    <div class="tags-row">
+      <span class="pill">python</span><span class="pill">macos</span><span class="pill">mlx</span>
+      <span class="pill">metal</span><span class="pill">apple-silicon</span><span class="pill">gpu-kernels</span>
+      <span class="pill">kv-cache</span><span class="pill">flashattention</span><span class="pill">llm-inference</span>
+      <span class="pill">custom-kernels</span>
+    </div>
+
+    <div class="foot-line">
+      <span>Field notes on an open-source kernel lab.</span>
+      <span>Not affiliated with Apple, MLX, or Anthropic.</span>
+    </div>
+  </footer>
+
+</main>
+
+<script>
+  (function(){
+    var els = document.querySelectorAll('.reveal');
+    if(!('IntersectionObserver' in window)){
+      els.forEach(function(el){ el.classList.add('is-visible'); });
+      return;
+    }
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(entry){
+        if(entry.isIntersecting){
+          entry.target.classList.add('is-visible');
+          io.unobserve(entry.target);
+        }
+      });
+    }, {threshold:0.12, rootMargin:'0px 0px -8% 0px'});
+    els.forEach(function(el){ io.observe(el); });
+  })();
+</script>
+
+</body>
+</html>
