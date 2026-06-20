@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 
-_SUITES = ["attention", "decode", "paged_decode", "norm", "rope", "activation", "layout", "quant", "quant_matvec_tiled", "decode_block", "quantized_decode_block", "threadgroup_attention_v2", "toy_transformer_decode"]
+_SUITES = ["attention", "decode", "paged_decode", "norm", "rope", "activation", "layout", "quant", "quant_matvec_tiled", "decode_block", "quantized_decode_block", "threadgroup_attention_v2", "simdgroup_attention", "toy_transformer_decode"]
 
 
 def _shape_text(shape):

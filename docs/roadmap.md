@@ -25,8 +25,11 @@
 13. v0.13 Multi-output q4/q8 matvec tiling
 14. v0.14 End-to-end toy transformer layer decode benchmark
 15. v0.15 simdgroup_matrix attention experiments
-16. v0.16 chip-specific autotuning
-17. v1.0 stable experimental kernel suite
+16. v0.16 Chip-specific autotuning + backend selection registry
+17. v0.17 real model integration scaffold
+18. v0.18 q4 MLP fused block
+19. v0.19 chip-specific tuned configs
+20. v1.0 stable experimental kernel suite
 
 ## v0.2: Transformer primitives
 
@@ -107,6 +110,33 @@
 - Add a correctness-first toy single-layer decode composition built from existing repo primitives.
 - Benchmark contiguous and paged decode-layer paths on top of quantized attention and SwiGLU.
 - Keep benchmark validation anchored to the pure reference composition before timing optimized presets.
+
+## v0.15: simdgroup_matrix attention experiments
+
+- Add an explicit `simdgroup_d64` prefill attention backend for `D=64` and `mx.float16`.
+- Keep simdgroup experiments off the default and `auto` paths.
+- Treat compilation/runtime availability as platform-specific and report failures clearly.
+
+## v0.16: Chip-specific autotuning + backend selection registry
+
+- Add a backend registry for operations with multiple candidate kernels.
+- Add an opt-in local autotune cache keyed by operation, shape, dtype, and machine information.
+- Keep runtime selection conservative unless a tuned local result is available.
+
+## v0.17: real model integration scaffold
+
+- Add small model-facing composition helpers that exercise the kernel library under realistic decode shapes.
+- Keep integration harnesses correctness-first and benchmarkable.
+
+## v0.18: q4 MLP fused block
+
+- Extend quantized transformer composition beyond attention into MLP-heavy decode blocks.
+- Reuse validated q4 matvec primitives before adding new fused kernels.
+
+## v0.19: chip-specific tuned configs
+
+- Add curated tuned configurations only after enough local autotune evidence exists per chip family.
+- Keep those configs explicit and measurable rather than assuming they generalize.
 
 ## Historical notes
 

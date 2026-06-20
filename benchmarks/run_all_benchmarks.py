@@ -10,6 +10,7 @@ from benchmark_utils import safe_run_case, time_fn, dtype_from_string, write_csv
 from collect_system_info import collect_system_info
 from ops.activation_ops import swiglu
 from ops.attention_ops import fast_attention
+from ops.autotune_ops import select_backend
 from ops.decode_block_ops import decode_block_from_qkv, paged_decode_block_from_qkv
 from ops.decode_ops import decode_attention
 from ops.fused_ops import fused_decode_step_from_qkv, qkv_rope_cache_update
@@ -61,18 +62,25 @@ def _skip(results, suite, kernel, backend, dtype_name, shape, error):
     _record(results, suite, kernel, backend, dtype_name, shape, "skipped", error=error)
 
 
-def _attention_cases(results, dtype, dtype_name, quick, include_slow, backends_mode, iters, fail_fast):
+def _choose_backends(op_name: str, shape: dict, dtype_name: str, default_backend: str, use_autotune: bool, extra=None, candidates=None):
+    if not use_autotune:
+        return list(candidates or [])
+    return [select_backend(op_name, shape, dtype_name, default_backend=default_backend, extra=extra)]
+
+
+def _attention_cases(results, dtype, dtype_name, quick, include_slow, backends_mode, iters, fail_fast, use_autotune):
     shapes = [{"B": 1, "S": 64, "H": 4, "D": 64}] if quick else [
         {"B": 1, "S": 128, "H": 8, "D": 64},
         {"B": 1, "S": 128, "H": 8, "D": 128},
         {"B": 2, "S": 256, "H": 8, "D": 64},
     ]
-    backends = _backend_set(backends_mode, ["reference", "baseline"], ["row_parallel", "tiled_kv", "baseline_d64", "baseline_d128"])
+    base_backends = _backend_set(backends_mode, ["reference", "baseline"], ["row_parallel", "tiled_kv", "baseline_d64", "baseline_d128"])
     for shape in shapes:
         B, S, H, D = shape["B"], shape["S"], shape["H"], shape["D"]
         Q = mx.random.normal((B, S, H, D)).astype(dtype)
         K = mx.random.normal((B, S, H, D)).astype(dtype)
         V = mx.random.normal((B, S, H, D)).astype(dtype)
+        backends = _choose_backends("fast_attention", shape, dtype_name, "baseline", use_autotune, extra={"causal": False}, candidates=base_backends)
         for backend in backends:
             if backend == "baseline_d64" and D != 64:
                 _skip(results, "attention", "fast_attention", backend, dtype_name, shape, "requires D == 64")
@@ -86,18 +94,19 @@ def _attention_cases(results, dtype, dtype_name, quick, include_slow, backends_m
             _run(results, "attention", "fast_attention", backend, dtype_name, shape, lambda b=backend, q=Q, k=K, v=V: time_fn(lambda: fast_attention(q, k, v, backend=b), warmup=3, iters=iters), fail_fast)
 
 
-def _decode_cases(results, dtype, dtype_name, quick, backends_mode, iters, fail_fast):
+def _decode_cases(results, dtype, dtype_name, quick, backends_mode, iters, fail_fast, use_autotune):
     shapes = [{"B": 1, "MAX_S": 64, "H": 4, "D": 64, "length": 64}] if quick else [
         {"B": 1, "MAX_S": 128, "H": 8, "D": 64, "length": 128},
         {"B": 1, "MAX_S": 128, "H": 8, "D": 128, "length": 128},
         {"B": 2, "MAX_S": 512, "H": 8, "D": 64, "length": 512},
     ]
-    backends = _backend_set(backends_mode, ["reference", "metal"], ["metal_d64", "metal_d128"])
+    base_backends = _backend_set(backends_mode, ["reference", "metal"], ["metal_d64", "metal_d128"])
     for shape in shapes:
         B, MAX_S, H, D, length = shape["B"], shape["MAX_S"], shape["H"], shape["D"], shape["length"]
         q = mx.random.normal((B, 1, H, D)).astype(dtype)
         K_cache = mx.random.normal((B, MAX_S, H, D)).astype(dtype)
         V_cache = mx.random.normal((B, MAX_S, H, D)).astype(dtype)
+        backends = _choose_backends("decode_attention", shape, dtype_name, "metal", use_autotune, extra={"length": length}, candidates=base_backends)
         for backend in backends:
             if backend == "metal_d64" and D != 64:
                 _skip(results, "decode", "decode_attention", backend, dtype_name, shape, "requires D == 64")
@@ -108,18 +117,19 @@ def _decode_cases(results, dtype, dtype_name, quick, backends_mode, iters, fail_
             _run(results, "decode", "decode_attention", backend, dtype_name, shape, lambda b=backend, qq=q, kk=K_cache, vv=V_cache, ll=length: time_fn(lambda: decode_attention(qq, kk, vv, lengths=ll, backend=b), warmup=3, iters=iters), fail_fast)
 
 
-def _paged_decode_cases(results, dtype, dtype_name, quick, backends_mode, iters, fail_fast):
+def _paged_decode_cases(results, dtype, dtype_name, quick, backends_mode, iters, fail_fast, use_autotune):
     shapes = [{"B": 1, "MAX_S": 64, "PAGE_SIZE": 16, "H": 4, "D": 64, "length": 64}] if quick else [
         {"B": 1, "MAX_S": 128, "PAGE_SIZE": 16, "H": 8, "D": 64, "length": 128},
         {"B": 2, "MAX_S": 512, "PAGE_SIZE": 16, "H": 8, "D": 64, "length": 512},
     ]
-    backends = _backend_set(backends_mode, ["reference", "metal"], ["metal_d64", "metal_d128"])
+    base_backends = _backend_set(backends_mode, ["reference", "metal"], ["metal_d64", "metal_d128"])
     for shape in shapes:
         B, MAX_S, PAGE_SIZE, H, D, length = shape["B"], shape["MAX_S"], shape["PAGE_SIZE"], shape["H"], shape["D"], shape["length"]
         K_pages, V_pages, block_table = allocate_paged_kv_cache(B, MAX_S, H, D, PAGE_SIZE, dtype)
         K_pages = mx.random.normal(K_pages.shape).astype(dtype)
         V_pages = mx.random.normal(V_pages.shape).astype(dtype)
         q = mx.random.normal((B, 1, H, D)).astype(dtype)
+        backends = _choose_backends("paged_decode_attention", shape, dtype_name, "metal", use_autotune, extra={"length": length, "PAGE_SIZE": PAGE_SIZE}, candidates=base_backends)
         for backend in backends:
             if backend == "metal_d64" and D != 64:
                 _skip(results, "paged_decode", "paged_decode_attention", backend, dtype_name, shape, "requires D == 64")
@@ -168,9 +178,9 @@ def _layout_cases(results, dtype, dtype_name, quick, iters, fail_fast):
         _run(results, "layout", "fused_decode_step_from_qkv", "metal", dtype_name, shape, lambda qq=qkv[:, :1, :], kk=K_cache, vv=V_cache, cc=cos, ss=sin, hh=shape["H"], dd=shape["D"]: time_fn(lambda: fused_decode_step_from_qkv(qq, kk, vv, cc, ss, 0, H=hh, D=dd, backend="metal"), warmup=3, iters=iters), fail_fast)
 
 
-def _quant_cases(results, dtype, dtype_name, quick, backends_mode, iters, fail_fast):
+def _quant_cases(results, dtype, dtype_name, quick, backends_mode, iters, fail_fast, use_autotune):
     shapes = [{"B": 1, "K": 512, "N": 512, "group_size": 32}] if quick else [{"B": 1, "K": 4096, "N": 4096, "group_size": 32}, {"B": 1, "K": 4096, "N": 11008, "group_size": 32}]
-    backends = _backend_set(backends_mode, ["reference", "metal"], ["metal_parallel", "metal_tiled"])
+    base_backends = _backend_set(backends_mode, ["reference", "metal"], ["metal_parallel", "metal_tiled"])
     for shape in shapes:
         B, K, N, group_size = shape["B"], shape["K"], shape["N"], shape["group_size"]
         groups = (K + group_size - 1) // group_size
@@ -179,10 +189,13 @@ def _quant_cases(results, dtype, dtype_name, quick, backends_mode, iters, fail_f
         packed = pack_q4(q4)
         q8 = (mx.random.uniform((N, K)) * 255).astype(mx.uint8)
         scales = mx.random.normal((N, groups)).astype(mx.float32)
+        q4_backends = _choose_backends("q4_matvec_decode", shape, dtype_name, "metal_parallel", use_autotune, extra={"bits": 4, "group_size": group_size}, candidates=base_backends)
+        q8_backends = _choose_backends("q8_matvec_decode", shape, dtype_name, "metal_parallel", use_autotune, extra={"bits": 8, "group_size": group_size}, candidates=base_backends)
         _run(results, "quant", "dequant_q4", "metal", dtype_name, shape, lambda pp=packed, ss=scales, gs=group_size, dt=dtype: time_fn(lambda: dequant_q4(pp, ss, group_size=gs, out_dtype=dt, backend="metal"), warmup=3, iters=iters), fail_fast)
         _run(results, "quant", "dequant_q8", "metal", dtype_name, shape, lambda qq=q8, ss=scales, gs=group_size, dt=dtype: time_fn(lambda: dequant_q8(qq, ss, group_size=gs, out_dtype=dt, backend="metal"), warmup=3, iters=iters), fail_fast)
-        for backend in backends:
+        for backend in q4_backends:
             _run(results, "quant", "q4_matvec_decode", backend, dtype_name, shape, lambda b=backend, xx=x, pp=packed, ss=scales, gs=group_size: time_fn(lambda: q4_matvec_decode(xx, pp, ss, group_size=gs, backend=b), warmup=3, iters=iters), fail_fast)
+        for backend in q8_backends:
             _run(results, "quant", "q8_matvec_decode", backend, dtype_name, shape, lambda b=backend, xx=x, qq=q8, ss=scales, gs=group_size: time_fn(lambda: q8_matvec_decode(xx, qq, ss, group_size=gs, backend=b), warmup=3, iters=iters), fail_fast)
 
 
@@ -288,6 +301,23 @@ def _threadgroup_attention_v2_cases(results, dtype, dtype_name, quick, iters, fa
         _run(results, "threadgroup_attention_v2", "fast_attention", "threadgroup", dtype_name, shape, lambda q=Q, k=K, v=V, c=causal: time_fn(lambda: fast_attention(q, k, v, causal=c, backend="threadgroup"), warmup=3, iters=iters), fail_fast)
 
 
+def _simdgroup_attention_cases(results, dtype, dtype_name, quick, iters):
+    shapes = [{"B": 1, "S": 32, "H": 4, "D": 64, "causal": False}] if quick else [
+        {"B": 1, "S": 128, "H": 8, "D": 64, "causal": False},
+    ]
+    for shape in shapes:
+        if dtype != mx.float16:
+            _skip(results, "simdgroup_attention", "fast_attention", "simdgroup_d64", dtype_name, shape, "requires dtype == float16")
+            continue
+        B, S, H, D, causal = shape["B"], shape["S"], shape["H"], shape["D"], shape["causal"]
+        Q = mx.random.normal((B, S, H, D)).astype(dtype)
+        K = mx.random.normal((B, S, H, D)).astype(dtype)
+        V = mx.random.normal((B, S, H, D)).astype(dtype)
+        _run(results, "simdgroup_attention", "fast_attention", "baseline", dtype_name, shape, lambda q=Q, k=K, v=V, c=causal: time_fn(lambda: fast_attention(q, k, v, causal=c, backend="baseline"), warmup=3, iters=iters), False)
+        _run(results, "simdgroup_attention", "fast_attention", "threadgroup", dtype_name, shape, lambda q=Q, k=K, v=V, c=causal: time_fn(lambda: fast_attention(q, k, v, causal=c, backend="threadgroup"), warmup=3, iters=iters), False)
+        _run(results, "simdgroup_attention", "fast_attention", "simdgroup_d64", dtype_name, shape, lambda q=Q, k=K, v=V, c=causal: time_fn(lambda: fast_attention(q, k, v, causal=c, backend="simdgroup_d64"), warmup=3, iters=iters), False)
+
+
 def _toy_transformer_decode_cases(results, dtype, dtype_name, quick, iters, fail_fast):
     shapes = (
         [{"cache": "contiguous", "bits": 4, "B": 1, "K": 256, "H": 4, "D": 64, "INTERMEDIATE": 512, "MAX_S": 32, "PAGE_SIZE": 8, "T": 4}]
@@ -325,6 +355,7 @@ def main():
     parser.add_argument("--dtype", choices=["float16", "bfloat16"], default="float16")
     parser.add_argument("--include-slow", action="store_true")
     parser.add_argument("--backends", choices=["all", "stable", "experimental"], default="all")
+    parser.add_argument("--use-autotune", action="store_true")
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
@@ -335,16 +366,17 @@ def main():
     iters = 5 if quick else 10
 
     results = []
-    _attention_cases(results, dtype, args.dtype, quick, args.include_slow, args.backends, iters, args.fail_fast)
-    _decode_cases(results, dtype, args.dtype, quick, args.backends, iters, args.fail_fast)
-    _paged_decode_cases(results, dtype, args.dtype, quick, args.backends, iters, args.fail_fast)
+    _attention_cases(results, dtype, args.dtype, quick, args.include_slow, args.backends, iters, args.fail_fast, args.use_autotune)
+    _decode_cases(results, dtype, args.dtype, quick, args.backends, iters, args.fail_fast, args.use_autotune)
+    _paged_decode_cases(results, dtype, args.dtype, quick, args.backends, iters, args.fail_fast, args.use_autotune)
     _misc_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
-    _layout_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
-    _quant_cases(results, dtype, args.dtype, quick, args.backends, iters, args.fail_fast)
+    _layout_cases(results, dtype, args.dtype, quick, args.fail_fast)
+    _quant_cases(results, dtype, args.dtype, quick, args.backends, iters, args.fail_fast, args.use_autotune)
     _quant_matvec_tiled_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _decode_block_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _quantized_decode_block_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _threadgroup_attention_v2_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
+    _simdgroup_attention_cases(results, dtype, args.dtype, quick, iters)
     _toy_transformer_decode_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
 
     payload = {
@@ -354,6 +386,7 @@ def main():
             "dtype": args.dtype,
             "include_slow": args.include_slow,
             "backends": args.backends,
+            "use_autotune": args.use_autotune,
             "fail_fast": args.fail_fast,
             "seed": args.seed,
         },

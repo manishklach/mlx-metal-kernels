@@ -25,6 +25,7 @@ _DEFAULT_KERNEL = _KERNEL_DIR / "fast_attention.metal"
 _ROW_PARALLEL_KERNEL = _KERNEL_DIR / "fast_attention_row_parallel.metal"
 _TILED_KV_KERNEL = _KERNEL_DIR / "fast_attention_tiled_kv.metal"
 _THREADGROUP_KERNEL = _KERNEL_DIR / "fast_attention_threadgroup.metal"
+_SIMDGROUP_D64_KERNEL = _KERNEL_DIR / "fast_attention_simdgroup_d64.metal"
 _SPECIALIZED_BASELINE_KERNELS = {
     "baseline_d64": _KERNEL_DIR / "fast_attention_d64.metal",
     "baseline_d128": _KERNEL_DIR / "fast_attention_d128.metal",
@@ -33,6 +34,7 @@ _MAX_HEAD_DIM = 128
 _THREADGROUP_ATTENTION_THREADS = 128
 _ROW_PARALLEL_THREADS = 128
 _TILED_KV_THREADS = 64
+_SIMDGROUP_ATTENTION_THREADS = 32
 _KV_TILE = 16
 
 
@@ -251,6 +253,47 @@ def _fast_attention_threadgroup(
     )
 
 
+def _raise_simdgroup_unavailable(exc: Exception) -> None:
+    raise RuntimeError(
+        "simdgroup_d64 backend unavailable: experimental simdgroup attention "
+        f"failed to compile or execute ({exc})"
+    ) from exc
+
+
+def _fast_attention_simdgroup_d64(
+    Q: mx.array,
+    K: mx.array,
+    V: mx.array,
+    *,
+    scale: float,
+    causal: bool,
+) -> mx.array:
+    B, Sq, _, H, D = _validate_qkv(Q, K, V, require_same_sequence=True)
+    if D != 64:
+        raise ValueError(f"backend='simdgroup_d64' requires D == 64, got D={D}")
+    if Q.dtype != mx.float16:
+        raise ValueError(
+            "backend='simdgroup_d64' currently supports only mx.float16. "
+            f"Got dtype={Q.dtype}."
+        )
+    total_rows = B * Sq * H
+    try:
+        return _metal_attention_common(
+            Q,
+            K,
+            V,
+            scale=scale,
+            causal=causal,
+            kernel_path=_SIMDGROUP_D64_KERNEL,
+            kernel_name="fast_attention_simdgroup_d64_forward",
+            threadgroup=(_SIMDGROUP_ATTENTION_THREADS, 1, 1),
+            grid_x=total_rows * _SIMDGROUP_ATTENTION_THREADS,
+            fixed_head_dim=64,
+        )
+    except Exception as exc:  # noqa: BLE001
+        _raise_simdgroup_unavailable(exc)
+
+
 def _fast_attention_specialized(
     Q: mx.array,
     K: mx.array,
@@ -306,6 +349,7 @@ def fast_attention(
         - "baseline": correctness-first one-thread-per-row Metal kernel
         - "row_parallel": experimental one-threadgroup-per-row Metal kernel
         - "tiled_kv": experimental threadgroup-tiled K/V streaming kernel
+        - "simdgroup_d64": experimental fp16-only D=64 simdgroup attention kernel
         - "auto": currently aliases to "baseline"
 
     Returns
@@ -350,10 +394,12 @@ def fast_attention(
         return _fast_attention_tiled_kv(Q, K, V, scale=scale, causal=causal)
     if backend_name == "threadgroup":
         return _fast_attention_threadgroup(Q, K, V, scale=scale, causal=causal)
+    if backend_name == "simdgroup_d64":
+        return _fast_attention_simdgroup_d64(Q, K, V, scale=scale, causal=causal)
     raise ValueError(
         f"Unsupported backend={backend!r}. "
         "Expected one of: 'reference', 'baseline', 'baseline_d64', 'baseline_d128', "
-        "'row_parallel', 'tiled_kv', 'threadgroup', 'auto'."
+        "'row_parallel', 'tiled_kv', 'threadgroup', 'simdgroup_d64', 'auto'."
     )
 
 

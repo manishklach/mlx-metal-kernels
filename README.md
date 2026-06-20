@@ -17,6 +17,8 @@ Longer term, this repo is intended to become an experimental kernel lab for MLX 
 ## Kernel Families
 
 - Attention: reference, baseline, row-parallel, and tiled-K/V fused attention backends.
+- Simdgroup Attention Experiments: explicit `simdgroup_d64` prefill backend for experimental `D=64` fp16 attention work.
+- Autotuning Infrastructure: opt-in backend registry plus local machine-specific autotune cache for backend selection experiments.
 - Threadgroup Attention v2: cooperative threadgroup-reduction backends for decode, paged decode, and prefill attention.
 - RMSNorm: correctness-first row-wise normalization with a pure MLX path and a Metal backend.
 - RoPE: rotary embedding application for transformer attention inputs.
@@ -45,11 +47,12 @@ This repository starts with a correctness-first implementation and then adds pro
 2. Baseline custom Metal streaming attention kernel
 3. Row-parallel attention kernel
 4. Tiled K/V attention kernel
-5. Specialized D=64 and D=128 kernels
-6. Decode attention for single-token inference
-7. KV-cache and paged-KV kernels
-8. Quantized decode block
-9. Additional MLX custom kernels for transformer inference
+5. Simdgroup attention experiments
+6. Specialized D=64 and D=128 kernels
+7. Decode attention for single-token inference
+8. KV-cache and paged-KV kernels
+9. Quantized decode block
+10. Additional MLX custom kernels for transformer inference
 
 The design philosophy is simple:
 
@@ -92,16 +95,19 @@ Backends:
   output accumulation across `D`.
 - `tiled_kv`: experimental kernel. One threadgroup stages K/V tiles in
   threadgroup memory and streams over KV blocks with online softmax state.
+- `simdgroup_d64`: experimental prefill kernel for `D=64` and `mx.float16`.
+  It is explicit-only and intended as a narrow simdgroup experiment.
 - `auto`: currently aliases to `baseline` until the experimental path is
   consistently validated on Apple Silicon.
 
 Specialized decode and attention backends are opt-in. `auto` stays conservative by default; set `MLX_METAL_USE_SPECIALIZED=1` to route supported `D=64` and `D=128` shapes to the specialized kernels during local experiments.
 Threadgroup attention is also opt-in. Set `MLX_METAL_USE_THREADGROUP_ATTENTION=1` to let `auto` dispatch to the experimental threadgroup attention backends.
 
-This is **not yet** a heavily optimized tiled/threadgroup-memory or
-simdgroup-matrix FlashAttention kernel. The baseline path remains the default
-stable backend, and the row-parallel path should be treated as experimental
-until it passes tests and benchmarks on Apple Silicon.
+This is **not yet** a full heavily optimized tiled/threadgroup-memory or
+simdgroup-matrix FlashAttention implementation. The baseline path remains the
+default stable backend, while row-parallel, tiled-K/V, threadgroup, and
+`simdgroup_d64` should all be treated as explicit experimental paths until
+they pass repeated Apple Silicon validation and benchmark coverage.
 
 ## Install
 
@@ -144,6 +150,8 @@ python benchmarks/bench_quantized_decode_block.py --bits 4 --cache paged --B 1 -
 python benchmarks/bench_threadgroup_attention.py --mode decode --B 1 --MAX_S 128 --H 8 --D 64 --length 128 --dtype float16 --backend all
 python benchmarks/bench_threadgroup_attention.py --mode paged_decode --B 1 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
 python benchmarks/bench_threadgroup_attention.py --mode prefill --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/bench_simdgroup_attention.py --mode prefill --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/autotune.py --op all --quick --dtype float16 --write-cache
 python benchmarks/bench_toy_transformer_decode.py --cache contiguous --bits 4 --B 1 --K 512 --H 8 --D 64 --INTERMEDIATE 1024 --MAX_S 64 --T 8 --dtype float16 --backend-preset parallel
 python benchmarks/bench_toy_transformer_decode.py --cache paged --bits 4 --B 1 --K 512 --H 8 --D 64 --INTERMEDIATE 1024 --MAX_S 64 --PAGE_SIZE 16 --T 8 --dtype float16 --backend-preset parallel
 ```
@@ -160,6 +168,8 @@ python benchmarks/bench_attention.py --backend baseline --matrix --H 8 --dtype f
 python benchmarks/bench_attention.py --backend row_parallel --matrix --H 8 --dtype float16
 python benchmarks/bench_attention.py --backend tiled_kv --matrix --H 8 --dtype float16
 python benchmarks/bench_attention.py --backend reference --matrix --H 8 --dtype float16
+python benchmarks/bench_simdgroup_attention.py --mode prefill --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/autotune.py --op all --quick --dtype float16 --write-cache
 python benchmarks/bench_kv_cache_update.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend metal
 python benchmarks/bench_decode_attention.py --B 2 --MAX_S 32 --H 8 --D 64 --length 32 --dtype float16 --backend all
 python benchmarks/bench_decode_loop.py --B 2 --MAX_S 64 --T 16 --H 8 --D 64 --dtype float16 --backend metal
@@ -203,6 +213,7 @@ O = fast_attention(Q, K, V, causal=True, backend="auto")
 O_exp = fast_attention(Q, K, V, causal=True, backend="row_parallel")
 O_tiled = fast_attention(Q, K, V, causal=True, backend="tiled_kv")
 O_threadgroup = fast_attention(Q, K, V, causal=False, backend="threadgroup")
+O_simd = fast_attention(Q, K, V, causal=False, backend="simdgroup_d64")
 O_d64 = fast_attention(Q, K, V, causal=False, backend="baseline_d64")
 
 x = mx.random.normal((2, 8, 1024)).astype(mx.float16)
@@ -350,9 +361,37 @@ python benchmarks/bench_paged_decode_loop.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --
 
 ```bash
 python benchmarks/run_all_benchmarks.py --quick
+python benchmarks/run_all_benchmarks.py --quick --use-autotune
 python benchmarks/run_all_benchmarks.py --full --output benchmarks/results/local_results.json --csv benchmarks/results/local_results.csv
+python benchmarks/autotune.py --op all --quick --dtype float16 --write-cache
 python scripts/save_benchmark_report.py benchmarks/results/local_results.json --output docs/performance_report_local.md
 ```
+
+## Autotuning
+
+Autotuning is opt-in. The repo now includes a backend registry and a local JSON cache for machine-specific backend choices.
+
+Example:
+
+```python
+from ops.autotune_ops import select_backend
+
+backend = select_backend(
+    "decode_attention",
+    {"B": 1, "MAX_S": 128, "H": 8, "D": 64, "length": 128},
+    "float16",
+    default_backend="metal",
+)
+```
+
+Commands:
+
+```bash
+python benchmarks/autotune.py --op all --quick --dtype float16 --write-cache
+python benchmarks/run_all_benchmarks.py --quick --use-autotune
+```
+
+Autotune results are local to a machine and should not be treated as universal performance claims.
 
 This project does not claim performance superiority without benchmark data from a specific Apple Silicon machine.
 
