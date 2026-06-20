@@ -26,6 +26,7 @@ from ops.quantized_decode_block_ops import paged_quantized_decode_block, quantiz
 from ops.rope_ops import apply_rope
 from ops.toy_transformer_ops import make_toy_layer_weights, paged_toy_transformer_decode_layer, toy_transformer_decode_layer
 from models.llama_config import LlamaLikeConfig
+from models.tiny_generation_pipeline import TinyGenerationPipeline, TinyGenerationPipelineConfig
 
 
 def _backend_set(mode: str, stable, experimental):
@@ -584,6 +585,47 @@ def _llama_stack_decode_cases(results, dtype, dtype_name, quick, iters, fail_fas
             )
 
 
+def _tiny_generation_pipeline_cases(results, dtype, dtype_name, quick, iters, fail_fast):
+    _ = dtype
+    _ = dtype_name
+    shapes = (
+        [{"bits": 4, "prompt_len": 4, "max_new_tokens": 4, "num_layers": 1, "hidden_size": 64, "intermediate_size": 128, "num_heads": 4, "num_kv_heads": 2, "head_dim": 16, "vocab_size": 128}]
+        if quick
+        else [{"bits": 4, "prompt_len": 8, "max_new_tokens": 16, "num_layers": 2, "hidden_size": 512, "intermediate_size": 2048, "num_heads": 8, "num_kv_heads": 2, "head_dim": 64, "vocab_size": 128}]
+    )
+    backends = ["reference", "metal", "tiled", "fused_experimental"]
+    for shape in shapes:
+        prompt = "a" * shape["prompt_len"]
+        for backend in backends:
+            config = TinyGenerationPipelineConfig(
+                hidden_size=shape["hidden_size"],
+                intermediate_size=shape["intermediate_size"],
+                num_attention_heads=shape["num_heads"],
+                num_key_value_heads=shape["num_kv_heads"],
+                head_dim=shape["head_dim"],
+                num_hidden_layers=shape["num_layers"],
+                max_position_embeddings=shape["prompt_len"] + shape["max_new_tokens"] + 16,
+                vocab_size=shape["vocab_size"],
+                bits=shape["bits"],
+                backend_preset=backend,
+            ).validate()
+            pipeline = TinyGenerationPipeline(config=config)
+            _run(
+                results,
+                "tiny_generation_pipeline",
+                "generate",
+                backend,
+                dtype_name,
+                shape,
+                lambda p=pipeline, text=prompt, max_new=shape["max_new_tokens"]: time_fn(
+                    lambda: (p.generate(text, max_new_tokens=max_new, greedy=True), mx.array(0.0))[1],
+                    warmup=1,
+                    iters=iters,
+                ),
+                fail_fast,
+            )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick", action="store_true")
@@ -622,6 +664,7 @@ def main():
     _toy_transformer_decode_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _llama_layer_decode_cases(results, dtype, args.dtype, quick, iters, args.fail_fast, args.use_autotune)
     _llama_stack_decode_cases(results, dtype, args.dtype, quick, iters, args.fail_fast, args.use_autotune)
+    _tiny_generation_pipeline_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
 
     payload = {
         "system_info": collect_system_info(),

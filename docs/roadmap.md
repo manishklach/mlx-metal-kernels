@@ -33,8 +33,11 @@ This repo is evolving as an experimental Apple Silicon MLX/Metal kernel lab for 
 - [x] Multi-layer decode stack
 - [x] Production checkpoint converter
 - [x] Real tokenizer adapter
-- [ ] Full tiny-model generation demo
+- [x] Full tiny-model generation demo
 - [ ] Optimized prefill stack
+- [ ] Tokenizer/checkpoint package alignment
+- [ ] Local real-model smoke test
+- [ ] Quantized package tensor-data writer
 
 ## Development pattern
 
@@ -178,6 +181,11 @@ The intended workflow for each new primitive is:
 
 ### v0.31 full tiny-model generation demo
 
+- [x] `TinyGenerationPipelineConfig` and `TinyGenerationPipeline`
+- [x] end-to-end tokenizer -> embeddings -> stack -> logits -> sampling -> decode demo
+- [x] synthetic q4/q8 stack generation path
+- [x] package-based demo with metadata-only fallback
+- [x] benchmark scaffold and tests
 - extend the single-layer generation scaffold toward a slightly more complete tiny-model demo
 - keep it explicit that this remains an experimental local-kernel lab, not a production runtime
 
@@ -185,6 +193,21 @@ The intended workflow for each new primitive is:
 
 - extend the stack scaffold with a clearer prefill path on top of the GQA prefill building blocks
 - keep correctness and cache visibility ahead of optimization claims
+
+### v0.33 tokenizer/checkpoint package alignment
+
+- verify that tokenizer metadata, vocab assumptions, and checkpoint package metadata line up cleanly
+- keep optional tokenizer dependencies and local-file-only behavior explicit
+
+### v0.34 local real-model smoke test
+
+- add a narrow local smoke-test path for a small real checkpoint once tensor loading exists
+- avoid broad quality or performance claims until local verification is repeatable
+
+### v0.35 quantized package tensor-data writer
+
+- extend the metadata-only package format toward optional tensor payload support
+- keep the initial scope focused on deterministic local packaging and loading
 
 ## Long-term goal
 

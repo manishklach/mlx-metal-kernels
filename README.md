@@ -456,6 +456,37 @@ python benchmarks/bench_llama_stack_decode.py --bits 4 --B 1 --T 16 --num-layers
 
 This is synthetic random-weight infrastructure for runtime plumbing and cache validation, not production text generation.
 
+## Full tiny-model generation demo
+
+The repo includes a synthetic end-to-end generation demo that connects tokenizer, embeddings, multi-layer Llama-like decode stack, `lm_head` logits, sampling, and decoding.
+
+Current scope:
+
+- synthetic random weights
+- `CharTokenizer` by default
+- optional tokenizer adapters if installed
+- q4/q8 synthetic layers
+- greedy, top-k, and top-p sampling
+- benchmarkable generation loop
+
+Out of scope:
+
+- meaningful text generation
+- trained model checkpoint execution
+- production chat runtime
+- model downloads
+- tokenizer or chat-template correctness claims
+
+Commands:
+
+```bash
+python examples/full_tiny_generation_demo.py --prompt "Hello" --max-new-tokens 8 --greedy
+python examples/full_tiny_generation_with_package_demo.py
+python benchmarks/bench_tiny_generation_pipeline.py --prompt-len 8 --max-new-tokens 16 --num-layers 2 --hidden-size 512 --intermediate-size 2048 --num-heads 8 --num-kv-heads 2 --head-dim 64 --bits 4 --backend-preset fused_experimental --greedy
+```
+
+The package-based demo is intentionally conservative today. The current quantized package format carries metadata and tensor-layout information, but not the tensor payloads needed for real loading, so the helper raises a clear fallback message and switches to synthetic weights.
+
 ## Checkpoint converter scaffold
 
 The repo includes a dependency-light checkpoint converter scaffold for turning local layer tensors into repo-native q4/q8 package metadata.
@@ -692,6 +723,7 @@ Experimental backends may be disabled by default until they are repeatedly valid
 - [x] Quantized MLP block
 - [x] GQA/MQA support
 - [x] Checkpoint layout loader scaffold
+- [x] Full tiny-model generation demo
 - [ ] Optimized GQA Metal decode attention
 - [ ] Fused q4 MLP kernel
 - [x] Real checkpoint adapter scaffold

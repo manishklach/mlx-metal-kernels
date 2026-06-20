@@ -73,6 +73,12 @@ from .quantized_package_io import (
 )
 from .sampling import apply_repetition_penalty, greedy_sample, sample_logits, softmax, top_k_filter, top_p_filter
 from .tensor_store import InMemoryTensorStore, ManifestTensorStore, SafeTensorsTensorStore, TensorStore
+from .tiny_generation_pipeline import (
+    GenerationResult,
+    TinyGenerationPipeline,
+    TinyGenerationPipelineConfig,
+    create_pipeline_from_quantized_package,
+)
 from .tokenization import CharTokenizer, TokenizerProtocol, WhitespaceTokenizer
 from .tokenizer_adapters import (
     HFTokenizerAdapter,
@@ -116,6 +122,7 @@ __all__ = [
     "fused_qkv_shape",
     "fused_qkv_spec",
     "GenerationConfig",
+    "GenerationResult",
     "greedy_sample",
     "InMemoryTensorStore",
     "infer_model_family",
@@ -159,6 +166,8 @@ __all__ = [
     "TensorInfo",
     "TensorNamePattern",
     "TensorStore",
+    "TinyGenerationPipeline",
+    "TinyGenerationPipelineConfig",
     "tiny_debug_config",
     "tiny_gqa_debug_config",
     "TokenizerAdapterFactory",
@@ -180,6 +189,7 @@ __all__ = [
     "build_fused_qkv_manifest_entries",
     "build_llama_name_map",
     "build_rope_tables",
+    "create_pipeline_from_quantized_package",
     "package_from_quantized_layers",
 ]
 
