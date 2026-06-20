@@ -139,10 +139,10 @@ def quantized_gate_up_projection(
     backend="metal_tiled",
 ):
     _validate_bits(bits)
-    _valid_backends = {"reference", "metal_tiled", "metal_gate_up_tiled"}
+    _valid_backends = {"reference", "metal_tiled", "metal_parallel", "metal_gate_up_tiled"}
     if backend not in _valid_backends:
         raise ValueError(
-            "backend must be one of 'reference', 'metal_tiled', 'metal_gate_up_tiled'"
+            "backend must be one of 'reference', 'metal_tiled', 'metal_parallel', 'metal_gate_up_tiled'"
         )
     if backend == "reference":
         gate = quantized_linear(
@@ -184,7 +184,7 @@ def quantized_gate_up_projection(
             backend="reference",
         )
         return gate, up
-    if backend == "metal_tiled":
+    if backend in ("metal_tiled", "metal_parallel"):
         gate = quantized_linear(
             x,
             gate_w,
@@ -192,7 +192,7 @@ def quantized_gate_up_projection(
             gate_zeros,
             bits=bits,
             group_size=group_size,
-            backend="metal_tiled",
+            backend=backend,
         )
         up = quantized_linear(
             x,
@@ -201,12 +201,12 @@ def quantized_gate_up_projection(
             up_zeros,
             bits=bits,
             group_size=group_size,
-            backend="metal_tiled",
+            backend=backend,
         )
         return gate, up
     if backend != "metal_gate_up_tiled":
         raise ValueError(
-            "backend must be one of 'reference', 'metal_tiled', 'metal_gate_up_tiled'"
+            "backend must be one of 'reference', 'metal_tiled', 'metal_parallel', 'metal_gate_up_tiled'"
         )
     if bits == 4:
         return q4_gate_up_matvec_tiled(
