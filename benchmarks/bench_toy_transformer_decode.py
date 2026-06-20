@@ -173,7 +173,14 @@ def main():
 
     dtype = mx.float16 if args.dtype == "float16" else mx.bfloat16
     mx.random.seed(215)
-    weights = make_toy_layer_weights(args.K, args.INTERMEDIATE, bits=args.bits, group_size=args.group_size)
+    weights = make_toy_layer_weights(
+        args.K,
+        args.INTERMEDIATE,
+        bits=args.bits,
+        group_size=args.group_size,
+        num_attention_heads=args.H,
+        head_dim=args.D,
+    )
     backends = _resolve_backends(
         args.backend_preset,
         args.matvec_backend,

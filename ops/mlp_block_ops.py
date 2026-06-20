@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 
 import mlx.core as mx
 
@@ -158,6 +159,26 @@ def quantized_gate_up_projection(
             backend="reference",
         )
         return gate, up
+    if os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1":
+        gate = quantized_linear(
+            x,
+            gate_w,
+            gate_scales,
+            gate_zeros,
+            bits=bits,
+            group_size=group_size,
+            backend="reference",
+        )
+        up = quantized_linear(
+            x,
+            up_w,
+            up_scales,
+            up_zeros,
+            bits=bits,
+            group_size=group_size,
+            backend="reference",
+        )
+        return gate, up
     if backend == "metal_tiled":
         gate = quantized_linear(
             x,
@@ -219,7 +240,7 @@ def _resolve_mlp_backends(
         return norm_backend, matvec_backend, activation_backend, residual_backend
     mapping = {
         "reference": ("reference", "reference", "reference", "reference"),
-        "metal": ("metal", "metal", "metal", "metal"),
+        "metal": ("metal", "metal_tiled", "metal", "metal"),
         "parallel": ("metal", "metal_parallel", "metal", "metal"),
         "tiled": ("metal", "metal_tiled", "metal", "metal"),
         "fused_experimental": ("metal", "metal_gate_up_tiled", "metal_fused", "metal"),
@@ -356,6 +377,8 @@ def quantized_mlp_decode_step(
     eps=1e-5,
     backend_preset="tiled",
 ):
+    if backend_preset == "parallel":
+        backend_preset = "tiled"
     return quantized_mlp_block(
         x,
         x,

@@ -307,7 +307,14 @@ class LlamaLikeKernelAdapter:
 
     def make_demo_quantized_weights(self, *, bits: int = 4, group_size: int = 32):
         self.validate_supported()
-        return make_toy_layer_weights(self.config.hidden_size, self.config.intermediate_size, bits=bits, group_size=group_size)
+        return make_toy_layer_weights(
+            self.config.hidden_size,
+            self.config.intermediate_size,
+            bits=bits,
+            group_size=group_size,
+            num_attention_heads=self.config.num_attention_heads,
+            head_dim=self.config.head_dim,
+        )
 
     def _default_backend(self, op_name: str) -> str:
         if op_name in ("q4_matvec_decode", "q8_matvec_decode"):

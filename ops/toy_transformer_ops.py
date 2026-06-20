@@ -510,10 +510,21 @@ def paged_toy_transformer_decode_layer(
     return out, updated_K, updated_V
 
 
-def make_toy_layer_weights(hidden_dim: int, intermediate_dim: int, *, bits: int, group_size: int):
+def make_toy_layer_weights(
+    hidden_dim: int,
+    intermediate_dim: int,
+    *,
+    bits: int,
+    group_size: int,
+    num_attention_heads: int | None = None,
+    head_dim: int | None = None,
+):
     groups_hidden = (hidden_dim + group_size - 1) // group_size
     groups_intermediate = (intermediate_dim + group_size - 1) // group_size
-    qkv_out = hidden_dim * 3
+    if (num_attention_heads is None) != (head_dim is None):
+        raise ValueError("num_attention_heads and head_dim must be provided together")
+    qkv_hidden = hidden_dim if num_attention_heads is None else num_attention_heads * head_dim
+    qkv_out = qkv_hidden * 3
     q_range = 16 if bits == 4 else 255
 
     def _q(shape):

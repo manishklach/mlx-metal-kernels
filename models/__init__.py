@@ -1,4 +1,4 @@
-import mlx_compat as _mlx_compat  # noqa: F401
+from . import _mlx_compat as _mlx_compat  # noqa: F401
 
 from .alignment import (
     AlignmentIssue,

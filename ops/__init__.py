@@ -1,4 +1,4 @@
-import mlx_compat as _mlx_compat  # noqa: F401
+from . import _mlx_compat as _mlx_compat  # noqa: F401
 
 from .activation_ops import fused_swiglu, reference_swiglu, swiglu
 from .attention_ops import fast_attention, reference_attention, fast_attention_with_split, optimal_num_splits

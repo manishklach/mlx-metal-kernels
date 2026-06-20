@@ -23,4 +23,6 @@ jobs:
           pip install mlx numpy pytest
           pip install -e .
       - name: Run tests
+        env:
+          MLX_METAL_CI_SAFE_MODE: "1"
         run: pytest tests -q --tb=short

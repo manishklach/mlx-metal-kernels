@@ -475,7 +475,7 @@ def _toy_transformer_decode_cases(results, dtype, dtype_name, quick, iters, fail
         B, K, H, D = shape["B"], shape["K"], shape["H"], shape["D"]
         intermediate = shape["INTERMEDIATE"]
         MAX_S, PAGE_SIZE, T = shape["MAX_S"], shape["PAGE_SIZE"], shape["T"]
-        weights = make_toy_layer_weights(K, intermediate, bits=bits, group_size=32)
+        weights = make_toy_layer_weights(K, intermediate, bits=bits, group_size=32, num_attention_heads=H, head_dim=D)
         cos = mx.random.normal((MAX_S + 4, D // 2)).astype(mx.float32)
         sin = mx.random.normal((MAX_S + 4, D // 2)).astype(mx.float32)
         x = mx.random.normal((B, 1, K)).astype(dtype)

@@ -20,7 +20,7 @@ def _tol(dtype):
 @pytest.mark.parametrize(("bits", "B", "K", "H", "D", "MAX_S", "T", "dtype"), [(4, 1, 64, 2, 16, 8, 4, mx.float16), (4, 1, 64, 2, 16, 8, 4, mx.bfloat16), (8, 1, 64, 2, 16, 8, 4, mx.float16)])
 def test_toy_transformer_decode_layer_matches_reference(bits, B, K, H, D, MAX_S, T, dtype):
     mx.random.seed(213)
-    weights = make_toy_layer_weights(K, K * 2, bits=bits, group_size=32)
+    weights = make_toy_layer_weights(K, K * 2, bits=bits, group_size=32, num_attention_heads=H, head_dim=D)
     K_cache = mx.zeros((B, MAX_S, H, D), dtype=dtype)
     V_cache = mx.zeros((B, MAX_S, H, D), dtype=dtype)
     ref_K = K_cache
@@ -90,7 +90,7 @@ def test_toy_transformer_decode_layer_matches_reference(bits, B, K, H, D, MAX_S,
 @pytest.mark.parametrize(("bits", "B", "K", "H", "D", "MAX_S", "PAGE_SIZE", "T", "dtype"), [(4, 1, 64, 2, 16, 8, 4, 4, mx.float16), (8, 1, 64, 2, 16, 8, 4, 4, mx.float16)])
 def test_paged_toy_transformer_decode_layer_matches_reference(bits, B, K, H, D, MAX_S, PAGE_SIZE, T, dtype):
     mx.random.seed(214)
-    weights = make_toy_layer_weights(K, K * 2, bits=bits, group_size=32)
+    weights = make_toy_layer_weights(K, K * 2, bits=bits, group_size=32, num_attention_heads=H, head_dim=D)
     K_pages, V_pages, block_table = allocate_paged_kv_cache(B, MAX_S, H, D, PAGE_SIZE, dtype)
     ref_K = K_pages
     ref_V = V_pages

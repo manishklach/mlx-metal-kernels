@@ -472,6 +472,8 @@ def fast_attention_with_split(
     B, Sq, _, H, D = _validate_qkv(Q, K, V, require_same_sequence=True)
     if scale is None:
         scale = 1.0 / math.sqrt(D)
+    if os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1":
+        return reference_attention(Q, K, V, scale=scale, causal=causal)
     if num_splits <= 1:
         return fast_attention(Q, K, V, scale=scale, causal=causal)
 

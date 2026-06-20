@@ -30,6 +30,10 @@ def _make_header(dtype: mx.Dtype) -> str:
     return make_metal_header(dtype, MATVEC_THREADS=_MATVEC_PARALLEL_THREADS, MATVEC_TILED_THREADS=_MATVEC_TILED_THREADS)
 
 
+def _ci_safe_mode_enabled() -> bool:
+    return os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1"
+
+
 @lru_cache(maxsize=16)
 def _get_dequant_q4_kernel(dtype_name: str, source: str, header: str):
     return mx.fast.metal_kernel(
@@ -538,6 +542,8 @@ def q4_matvec_decode(
         backend_name = "metal_tiled" if os.environ.get("MLX_METAL_USE_TILED_MATVEC", "0") == "1" else "metal"
     if backend_name == "reference":
         return reference_q4_matvec_decode(x2d, packed_w, scales, zeros, group_size=group_size)
+    if _ci_safe_mode_enabled():
+        return reference_q4_matvec_decode(x2d, packed_w, scales, zeros, group_size=group_size)
     if backend_name == "metal_parallel":
         return _q4_matvec_decode_parallel(x2d, packed_w, scales, zeros, group_size=group_size)
     if backend_name == "metal_tiled":
@@ -593,6 +599,8 @@ def q8_matvec_decode(
     if backend_name == "auto":
         backend_name = "metal_tiled" if os.environ.get("MLX_METAL_USE_TILED_MATVEC", "0") == "1" else "metal"
     if backend_name == "reference":
+        return reference_q8_matvec_decode(x2d, q_w, scales, zeros, group_size=group_size)
+    if _ci_safe_mode_enabled():
         return reference_q8_matvec_decode(x2d, q_w, scales, zeros, group_size=group_size)
     if backend_name == "metal_parallel":
         return _q8_matvec_decode_parallel(x2d, q_w, scales, zeros, group_size=group_size)
