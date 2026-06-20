@@ -536,19 +536,24 @@ def make_toy_layer_weights(
 
         return pack_q4(q) if bits == 4 else q
 
+    def _scales(shape, bits):
+        if bits == 4:
+            return mx.random.uniform(shape, low=0.01, high=0.1).astype(mx.float32)
+        return mx.random.uniform(shape, low=0.001, high=0.005).astype(mx.float32)
+
     return {
         "attn_norm_weight": mx.ones((hidden_dim,), dtype=mx.float16),
         "ffn_norm_weight": mx.ones((hidden_dim,), dtype=mx.float16),
         "qkv_w": _maybe_pack(_q((qkv_out, hidden_dim))),
-        "qkv_scales": mx.random.normal((qkv_out, groups_hidden)).astype(mx.float32),
+        "qkv_scales": _scales((qkv_out, groups_hidden), bits),
         "out_w": _maybe_pack(_q((hidden_dim, qkv_hidden))),
-        "out_scales": mx.random.normal((hidden_dim, groups_qkv)).astype(mx.float32),
+        "out_scales": _scales((hidden_dim, groups_qkv), bits),
         "gate_w": _maybe_pack(_q((intermediate_dim, hidden_dim))),
-        "gate_scales": mx.random.normal((intermediate_dim, groups_hidden)).astype(mx.float32),
+        "gate_scales": _scales((intermediate_dim, groups_hidden), bits),
         "up_w": _maybe_pack(_q((intermediate_dim, hidden_dim))),
-        "up_scales": mx.random.normal((intermediate_dim, groups_hidden)).astype(mx.float32),
+        "up_scales": _scales((intermediate_dim, groups_hidden), bits),
         "down_w": _maybe_pack(_q((hidden_dim, intermediate_dim))),
-        "down_scales": mx.random.normal((hidden_dim, groups_intermediate)).astype(mx.float32),
+        "down_scales": _scales((hidden_dim, groups_intermediate), bits),
     }
 
 

@@ -457,22 +457,24 @@ def create_random_quantized_llama_layer_weights(
     def _pack(q):
         return pack_q4(q) if bits == 4 else q
 
-    def _rand_scales(shape):
-        return mx.random.uniform(shape, low=0.5, high=2.0).astype(mx.float32)
+    def _scales(shape, bits):
+        if bits == 4:
+            return mx.random.uniform(shape, low=0.01, high=0.1).astype(mx.float32)
+        return mx.random.uniform(shape, low=0.001, high=0.005).astype(mx.float32)
 
     return LlamaLayerKernelWeights(
         input_layernorm_weight=mx.ones((config.hidden_size,), dtype=dtype),
         post_attention_layernorm_weight=mx.ones((config.hidden_size,), dtype=dtype),
         qkv_w=_pack(_q((qkv_out, config.hidden_size))),
-        qkv_scales=_rand_scales((qkv_out, groups_hidden)),
+        qkv_scales=_scales((qkv_out, groups_hidden), bits),
         o_w=_pack(_q((config.hidden_size, config.hidden_size))),
-        o_scales=_rand_scales((config.hidden_size, groups_hidden)),
+        o_scales=_scales((config.hidden_size, groups_hidden), bits),
         gate_w=_pack(_q((config.intermediate_size, config.hidden_size))),
-        gate_scales=_rand_scales((config.intermediate_size, groups_hidden)),
+        gate_scales=_scales((config.intermediate_size, groups_hidden), bits),
         up_w=_pack(_q((config.intermediate_size, config.hidden_size))),
-        up_scales=_rand_scales((config.intermediate_size, groups_hidden)),
+        up_scales=_scales((config.intermediate_size, groups_hidden), bits),
         down_w=_pack(_q((config.hidden_size, config.intermediate_size))),
-        down_scales=_rand_scales((config.hidden_size, groups_intermediate)),
+        down_scales=_scales((config.hidden_size, groups_intermediate), bits),
         bits=bits,
         group_size=group_size,
     ).validate(config)
