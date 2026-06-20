@@ -28,6 +28,14 @@ BACKEND_REGISTRY = {
             "simdgroup_d64",
         ],
     },
+    "gqa_attention": {
+        "function": "ops.gqa_ops.gqa_attention",
+        "reference_backend": "reference",
+        "candidate_backends": [
+            "metal_gqa",
+            "metal_gqa_threadgroup",
+        ],
+    },
     "paged_decode_attention": {
         "function": "ops.paged_kv_ops.paged_decode_attention",
         "reference_backend": "reference",
@@ -56,6 +64,23 @@ BACKEND_REGISTRY = {
             "metal_tiled",
         ],
     },
+    "quantized_mlp_block": {
+        "function": "ops.mlp_block_ops.quantized_mlp_block",
+        "reference_backend": "reference",
+        "candidate_backends": [
+            "tiled",
+            "fused_experimental",
+        ],
+    },
+    "llama_layer_decode": {
+        "function": "ops.llama_layer_ops.llama_layer_decode_loop",
+        "reference_backend": "reference",
+        "candidate_backends": [
+            "metal",
+            "tiled",
+            "fused_experimental",
+        ],
+    },
 }
 
 
@@ -65,7 +90,9 @@ _EXPERIMENTAL_BACKENDS = {
     "threadgroup",
     "simdgroup_d64",
     "metal_threadgroup",
+    "metal_gqa_threadgroup",
     "metal_tiled",
+    "fused_experimental",
 }
 
 
@@ -127,6 +154,25 @@ def filter_backends_for_shape(op_name: str, shape: dict, dtype, backends) -> lis
             continue
         if "d128" in backend and dim != 128:
             continue
+        if op_name == "quantized_mlp_block":
+            bits = shape.get("bits")
+            if backend == "fused_experimental" and bits not in (4, 8):
+                continue
+            if backend == "fused_experimental" and dtype_name != "float16":
+                continue
+        if op_name == "llama_layer_decode":
+            bits = shape.get("bits")
+            if bits not in (4, 8):
+                continue
+            if backend == "fused_experimental" and dtype_name != "float16":
+                continue
+        if op_name == "gqa_attention":
+            hq = shape.get("Hq")
+            hkv = shape.get("Hkv")
+            if backend != "reference" and (hq is None or hkv is None or hq < hkv or hq % hkv != 0):
+                continue
+            if backend != "reference" and dim is not None and dim > 128:
+                continue
         if backend == "simdgroup_d64":
             if dim != 64:
                 continue

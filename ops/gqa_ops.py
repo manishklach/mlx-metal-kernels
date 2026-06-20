@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from functools import lru_cache
 import math
+from pathlib import Path
 from typing import Optional
 
 import mlx.core as mx
 
+from .attention_ops import reference_attention
 from .decode_ops import decode_attention, reference_decode_attention
 from .kv_cache_ops import kv_cache_update, normalize_positions, reference_kv_cache_update
 from .paged_kv_ops import (
@@ -13,6 +16,45 @@ from .paged_kv_ops import (
     reference_paged_kv_cache_update,
 )
 from .rope_ops import apply_rope, reference_apply_rope
+
+_KERNEL_DIR = Path(__file__).resolve().parent.parent / "kernels"
+_GQA_ATTENTION_KERNEL = _KERNEL_DIR / "gqa_attention.metal"
+_GQA_ATTENTION_THREADGROUP_KERNEL = _KERNEL_DIR / "gqa_attention_threadgroup.metal"
+_GQA_MAX_HEAD_DIM = 128
+_GQA_THREADGROUP_THREADS = 128
+
+
+def _make_header(dtype: mx.Dtype) -> str:
+    if dtype == mx.bfloat16:
+        elem_type = "bfloat"
+    elif dtype == mx.float16:
+        elem_type = "half"
+    else:
+        raise TypeError(f"gqa_attention supports only float16/bfloat16, got {dtype}")
+    return f"""
+#include <metal_stdlib>
+using namespace metal;
+#define ELEM_TYPE {elem_type}
+#define MAX_HEAD_DIM {_GQA_MAX_HEAD_DIM}
+#define TG_THREADS {_GQA_THREADGROUP_THREADS}
+"""
+
+
+def _load_kernel_source(path: Path) -> str:
+    if not path.exists():
+        raise FileNotFoundError(f"Missing Metal kernel source: {path}")
+    return path.read_text()
+
+
+@lru_cache(maxsize=8)
+def _get_gqa_attention_kernel(kernel_name: str, dtype_name: str, source: str, header: str):
+    return mx.fast.metal_kernel(
+        name=kernel_name,
+        input_names=["Q", "K", "V", "meta", "scale"],
+        output_names=["O"],
+        source=source,
+        header=header,
+    )
 
 
 def validate_gqa_heads(num_attention_heads: int, num_key_value_heads: int) -> None:
@@ -63,6 +105,34 @@ def maybe_expand_kv_heads_reference(k: mx.array, v: mx.array, num_attention_head
     return expand_kv_heads_reference(k, num_attention_heads), expand_kv_heads_reference(v, num_attention_heads)
 
 
+def _validate_gqa_attention_inputs(
+    Q: mx.array,
+    K: mx.array,
+    V: mx.array,
+    *,
+    causal: bool,
+    require_metal_supported: bool = False,
+) -> tuple[int, int, int, int, int, int]:
+    if Q.ndim != 4 or K.ndim != 4 or V.ndim != 4:
+        raise ValueError(f"Q, K, and V must be rank-4 [B,S,H,D], got {Q.shape}, {K.shape}, {V.shape}")
+    if K.shape != V.shape:
+        raise ValueError(f"K and V must have identical shapes, got {K.shape}, {V.shape}")
+    B, Sq, Hq, D = Q.shape
+    Kb, Sk, Hkv, Dk = K.shape
+    if B != Kb or D != Dk:
+        raise ValueError(f"Q, K, and V must agree on batch and head_dim, got {Q.shape}, {K.shape}, {V.shape}")
+    validate_gqa_heads(Hq, Hkv)
+    if causal and Sq != Sk:
+        raise ValueError(f"causal GQA prefill currently requires Sq == Sk, got Sq={Sq}, Sk={Sk}")
+    if Q.dtype not in (mx.float16, mx.bfloat16):
+        raise TypeError(f"Q dtype must be float16 or bfloat16, got {Q.dtype}")
+    if K.dtype not in (mx.float16, mx.bfloat16) or V.dtype not in (mx.float16, mx.bfloat16):
+        raise TypeError(f"K/V dtype must be float16 or bfloat16, got {K.dtype}, {V.dtype}")
+    if require_metal_supported and D > _GQA_MAX_HEAD_DIM:
+        raise ValueError(f"Metal GQA prefill currently supports D <= {_GQA_MAX_HEAD_DIM}, got D={D}")
+    return B, Sq, Sk, Hq, Hkv, D
+
+
 def reference_gqa_qkv_split(
     qkv,
     num_attention_heads,
@@ -106,6 +176,97 @@ def reference_gqa_qkv_split_rope(
     q_rope = reference_apply_rope(q, cos, sin, position_offset=position_offset)
     k_rope = reference_apply_rope(k, cos, sin, position_offset=position_offset)
     return q_rope, k_rope, v
+
+
+def reference_gqa_attention_via_expansion(
+    Q: mx.array,
+    K: mx.array,
+    V: mx.array,
+    *,
+    causal: bool = False,
+    scale: Optional[float] = None,
+) -> mx.array:
+    _, _, _, Hq, _, D = _validate_gqa_attention_inputs(Q, K, V, causal=causal)
+    if scale is None:
+        scale = 1.0 / math.sqrt(D)
+    K_exp, V_exp = maybe_expand_kv_heads_reference(K, V, Hq)
+    return reference_attention(Q, K_exp, V_exp, scale=scale, causal=causal)
+
+
+def reference_gqa_attention(
+    Q: mx.array,
+    K: mx.array,
+    V: mx.array,
+    *,
+    causal: bool = False,
+    scale: Optional[float] = None,
+) -> mx.array:
+    B, Sq, Sk, Hq, Hkv, D = _validate_gqa_attention_inputs(Q, K, V, causal=causal)
+    if scale is None:
+        scale = 1.0 / math.sqrt(D)
+    Qf = Q.astype(mx.float32)
+    Kf = K.astype(mx.float32)
+    Vf = V.astype(mx.float32)
+    group = gqa_group_size(Hq, Hkv)
+    outputs = []
+    for hq in range(Hq):
+        hkv = hq // group
+        q_head = Qf[:, :, hq:hq + 1, :]
+        k_head = Kf[:, :, hkv:hkv + 1, :]
+        v_head = Vf[:, :, hkv:hkv + 1, :]
+        scores = mx.matmul(q_head.transpose(0, 2, 1, 3), k_head.transpose(0, 2, 3, 1)) * float(scale)
+        if causal:
+            i = mx.arange(Sq)[:, None]
+            j = mx.arange(Sk)[None, :]
+            scores = mx.where(j > i, mx.array(-1.0e9, dtype=scores.dtype), scores)
+        probs = mx.softmax(scores, axis=-1)
+        out_head = mx.matmul(probs, v_head.transpose(0, 2, 1, 3)).transpose(0, 2, 1, 3)
+        outputs.append(out_head)
+    return mx.concatenate(outputs, axis=2).astype(Q.dtype)
+
+
+def gqa_attention(
+    Q: mx.array,
+    K: mx.array,
+    V: mx.array,
+    *,
+    causal: bool = False,
+    scale: Optional[float] = None,
+    backend: str = "reference",
+) -> mx.array:
+    B, Sq, Sk, Hq, Hkv, D = _validate_gqa_attention_inputs(
+        Q,
+        K,
+        V,
+        causal=causal,
+        require_metal_supported=backend != "reference",
+    )
+    if scale is None:
+        scale = 1.0 / math.sqrt(D)
+    backend_name = backend.lower()
+    if backend_name == "reference":
+        return reference_gqa_attention(Q, K, V, causal=causal, scale=scale)
+    if backend_name not in ("metal_gqa", "metal_gqa_threadgroup"):
+        raise ValueError("backend must be one of 'reference', 'metal_gqa', 'metal_gqa_threadgroup'")
+
+    kernel_path = _GQA_ATTENTION_KERNEL if backend_name == "metal_gqa" else _GQA_ATTENTION_THREADGROUP_KERNEL
+    kernel_name = "gqa_attention_forward" if backend_name == "metal_gqa" else "gqa_attention_threadgroup_forward"
+    threadgroup = (1, 1, 1) if backend_name == "metal_gqa" else (_GQA_THREADGROUP_THREADS, 1, 1)
+    total_rows = B * Sq * Hq
+    grid_x = total_rows if backend_name == "metal_gqa" else total_rows * _GQA_THREADGROUP_THREADS
+    dtype = Q.dtype
+    meta = mx.array([B, Sq, Sk, Hq, Hkv, D, int(causal)], dtype=mx.int32)
+    scale_arr = mx.array([float(scale)], dtype=mx.float32)
+    source = _load_kernel_source(kernel_path)
+    header = _make_header(dtype)
+    kernel = _get_gqa_attention_kernel(kernel_name, str(dtype), source, header)
+    return kernel(
+        inputs=[Q.astype(dtype), K.astype(dtype), V.astype(dtype), meta, scale_arr],
+        output_shapes=[(B, Sq, Hq, D)],
+        output_dtypes=[dtype],
+        grid=(grid_x, 1, 1),
+        threadgroup=threadgroup,
+    )[0]
 
 
 def _validate_gqa_decode_inputs(

@@ -38,6 +38,12 @@ def _concat(values, axis):
 
         return mx.concatenate(values, axis=axis)
     except Exception:  # noqa: BLE001
+        try:
+            import numpy as np
+
+            return np.concatenate(values, axis=axis)
+        except Exception:  # noqa: BLE001
+            pass
         if axis != 0:
             raise ValueError("shape-only fallback supports only axis=0")
         out = []

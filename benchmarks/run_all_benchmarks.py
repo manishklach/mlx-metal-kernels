@@ -14,15 +14,17 @@ from ops.autotune_ops import select_backend
 from ops.decode_block_ops import decode_block_from_qkv, paged_decode_block_from_qkv
 from ops.decode_ops import decode_attention
 from ops.fused_ops import fused_decode_step_from_qkv, qkv_rope_cache_update
-from ops.gqa_ops import gqa_decode_block_from_qkv, reference_gqa_decode_attention, reference_paged_gqa_decode_attention
+from ops.gqa_ops import gqa_attention, gqa_decode_block_from_qkv, reference_gqa_attention, reference_gqa_decode_attention, reference_paged_gqa_decode_attention
 from ops.layout_ops import qkv_split, qkv_split_rope
-from ops.mlp_block_ops import quantized_mlp_block
+from ops.llama_layer_ops import create_random_quantized_llama_layer_weights, init_llama_layer_cache, llama_layer_decode_loop
+from ops.mlp_block_ops import quantized_mlp_block, reference_quantized_mlp_block
 from ops.norm_ops import rms_norm
 from ops.paged_kv_ops import allocate_paged_kv_cache, paged_decode_attention
 from ops.quant_ops import dequant_q4, dequant_q8, pack_q4, q4_matvec_decode, q8_matvec_decode
 from ops.quantized_decode_block_ops import paged_quantized_decode_block, quantized_decode_block
 from ops.rope_ops import apply_rope
 from ops.toy_transformer_ops import make_toy_layer_weights, paged_toy_transformer_decode_layer, toy_transformer_decode_layer
+from models.llama_config import LlamaLikeConfig
 
 
 def _backend_set(mode: str, stable, experimental):
@@ -300,6 +302,45 @@ def _quantized_mlp_block_cases(results, dtype, dtype_name, quick, iters, fail_fa
             _run(results, "quantized_mlp_block", "quantized_mlp_block", preset, dtype_name, shape, lambda xx=x, rr=residual, nw=norm_weight, gw=gate_w, gs=gate_scales, uw=up_w, us=up_scales, dw=down_w, ds=down_scales, bb=bits, gsz=group_size, kk=kwargs: time_fn(lambda: quantized_mlp_block(xx, rr, nw, gw, gs, uw, us, dw, ds, bits=bb, group_size=gsz, **kk), warmup=3, iters=iters), fail_fast)
 
 
+def _fused_quantized_mlp_cases(results, dtype, dtype_name, quick, iters, fail_fast, use_autotune):
+    shapes = (
+        [{"bits": 4, "B": 1, "S": 1, "hidden_size": 64, "intermediate_size": 128, "group_size": 32}]
+        if quick
+        else [{"bits": 4, "B": 1, "S": 1, "hidden_size": 4096, "intermediate_size": 11008, "group_size": 32}]
+    )
+    base_backends = ["reference", "tiled", "fused_experimental"]
+    for shape in shapes:
+        bits = shape["bits"]
+        B, S = shape["B"], shape["S"]
+        hidden_size, intermediate_size, group_size = shape["hidden_size"], shape["intermediate_size"], shape["group_size"]
+        groups_hidden = (hidden_size + group_size - 1) // group_size
+        groups_intermediate = (intermediate_size + group_size - 1) // group_size
+        x = mx.random.normal((B, S, hidden_size)).astype(dtype)
+        residual = mx.random.normal((B, S, hidden_size)).astype(dtype)
+        norm_weight = mx.ones((hidden_size,), dtype=dtype)
+        gate_w = pack_q4((mx.random.uniform((intermediate_size, hidden_size)) * 16).astype(mx.uint8))
+        up_w = pack_q4((mx.random.uniform((intermediate_size, hidden_size)) * 16).astype(mx.uint8))
+        down_w = pack_q4((mx.random.uniform((hidden_size, intermediate_size)) * 16).astype(mx.uint8))
+        gate_scales = mx.random.normal((intermediate_size, groups_hidden)).astype(mx.float32)
+        up_scales = mx.random.normal((intermediate_size, groups_hidden)).astype(mx.float32)
+        down_scales = mx.random.normal((hidden_size, groups_intermediate)).astype(mx.float32)
+        backends = _choose_backends("quantized_mlp_block", shape, dtype_name, "tiled", use_autotune, extra={"bits": bits, "group_size": group_size}, candidates=base_backends)
+        for backend in backends:
+            if backend == "reference":
+                fn = lambda xx=x, rr=residual, nw=norm_weight, gw=gate_w, gs=gate_scales, uw=up_w, us=up_scales, dw=down_w, ds=down_scales, bb=bits, gsz=group_size: time_fn(  # noqa: E731
+                    lambda: reference_quantized_mlp_block(xx, rr, nw, gw, gs, uw, us, dw, ds, bits=bb, group_size=gsz),
+                    warmup=3,
+                    iters=iters,
+                )
+            else:
+                fn = lambda b=backend, xx=x, rr=residual, nw=norm_weight, gw=gate_w, gs=gate_scales, uw=up_w, us=up_scales, dw=down_w, ds=down_scales, bb=bits, gsz=group_size: time_fn(  # noqa: E731
+                    lambda: quantized_mlp_block(xx, rr, nw, gw, gs, uw, us, dw, ds, bits=bb, group_size=gsz, backend_preset=b),
+                    warmup=3,
+                    iters=iters,
+                )
+            _run(results, "fused_quantized_mlp", "quantized_mlp_block", backend, dtype_name, shape, fn, fail_fast)
+
+
 def _gqa_cases(results, dtype, dtype_name, quick, iters, fail_fast):
     shapes = (
         [{"B": 1, "MAX_S": 32, "PAGE_SIZE": 4, "Hq": 4, "Hkv": 2, "D": 16, "T": 4, "length": 32}]
@@ -329,6 +370,37 @@ def _gqa_cases(results, dtype, dtype_name, quick, iters, fail_fast):
         _run(results, "gqa", "decode_attention", "reference", dtype_name, shape, lambda qq=q, kk=K_cache, vv=V_cache, ll=length: time_fn(lambda: reference_gqa_decode_attention(qq, kk, vv, lengths=ll), warmup=3, iters=iters), fail_fast)
         _run(results, "gqa", "paged_decode_attention", "reference", dtype_name, shape, lambda qq=q, kk=K_pages, vv=V_pages, bt=block_table, ll=length: time_fn(lambda: reference_paged_gqa_decode_attention(qq, kk, vv, bt, lengths=ll), warmup=3, iters=iters), fail_fast)
         _run(results, "gqa", "decode_block", "reference", dtype_name, shape, lambda qq=qkv, kk=mx.zeros((B, MAX_S, Hkv, D), dtype=dtype), vv=mx.zeros((B, MAX_S, Hkv, D), dtype=dtype), cc=cos, ss=sin: time_fn(lambda: gqa_decode_block_from_qkv(qq, kk, vv, cc, ss, 0, num_attention_heads=Hq, num_key_value_heads=Hkv, head_dim=D, backend="reference"), warmup=3, iters=iters), fail_fast)
+
+
+def _gqa_prefill_cases(results, dtype, dtype_name, quick, iters, fail_fast, use_autotune):
+    shapes = (
+        [
+            {"B": 1, "Sq": 32, "Sk": 32, "Hq": 4, "Hkv": 2, "D": 16, "causal": True},
+            {"B": 1, "Sq": 32, "Sk": 32, "Hq": 4, "Hkv": 2, "D": 16, "causal": False},
+        ]
+        if quick
+        else [
+            {"B": 1, "Sq": 128, "Sk": 128, "Hq": 32, "Hkv": 8, "D": 128, "causal": True},
+            {"B": 1, "Sq": 128, "Sk": 128, "Hq": 32, "Hkv": 8, "D": 128, "causal": False},
+        ]
+    )
+    base_backends = ["reference", "metal_gqa", "metal_gqa_threadgroup"]
+    for shape in shapes:
+        B, Sq, Sk, Hq, Hkv, D, causal = shape["B"], shape["Sq"], shape["Sk"], shape["Hq"], shape["Hkv"], shape["D"], shape["causal"]
+        Q = mx.random.normal((B, Sq, Hq, D)).astype(dtype)
+        K = mx.random.normal((B, Sk, Hkv, D)).astype(dtype)
+        V = mx.random.normal((B, Sk, Hkv, D)).astype(dtype)
+        backends = _choose_backends("gqa_attention", shape, dtype_name, "metal_gqa", use_autotune, extra={"causal": causal}, candidates=base_backends)
+        for backend in backends:
+            fn = (
+                lambda qq=Q, kk=K, vv=V, c=causal: time_fn(lambda: reference_gqa_attention(qq, kk, vv, causal=c), warmup=3, iters=iters)
+                if backend == "reference"
+                else lambda b=backend, qq=Q, kk=K, vv=V, c=causal: time_fn(lambda: gqa_attention(qq, kk, vv, causal=c, backend=b), warmup=3, iters=iters)
+            )
+            if backend == "reference":
+                _run(results, "gqa_prefill_attention", "gqa_attention", backend, dtype_name, shape, lambda qq=Q, kk=K, vv=V, c=causal: time_fn(lambda: reference_gqa_attention(qq, kk, vv, causal=c), warmup=3, iters=iters), fail_fast)
+            else:
+                _run(results, "gqa_prefill_attention", "gqa_attention", backend, dtype_name, shape, lambda b=backend, qq=Q, kk=K, vv=V, c=causal: time_fn(lambda: gqa_attention(qq, kk, vv, causal=c, backend=b), warmup=3, iters=iters), fail_fast)
 
 
 def _threadgroup_attention_v2_cases(results, dtype, dtype_name, quick, iters, fail_fast):
@@ -413,6 +485,54 @@ def _toy_transformer_decode_cases(results, dtype, dtype_name, quick, iters, fail
             _run(results, "toy_transformer_decode", "paged_toy_transformer_decode_layer", "parallel+metal", dtype_name, shape, lambda xx=x, kk=K_pages, vv=V_pages, bt=block_table, ww=weights, cc=cos, ss=sin: time_fn(lambda: paged_toy_transformer_decode_layer(xx, ww["attn_norm_weight"].astype(dtype), ww["ffn_norm_weight"].astype(dtype), ww["qkv_w"], ww["qkv_scales"], ww["out_w"], ww["out_scales"], ww["gate_w"], ww["gate_scales"], ww["up_w"], ww["up_scales"], ww["down_w"], ww["down_scales"], kk, vv, bt, cc, ss, 0, bits=bits, group_size=32, H=H, D=D, matvec_backend="metal_parallel", block_backend="metal"), warmup=3, iters=iters), fail_fast)
 
 
+def _llama_layer_decode_cases(results, dtype, dtype_name, quick, iters, fail_fast, use_autotune):
+    shapes = (
+        [{"bits": 4, "B": 1, "T": 4, "hidden_size": 64, "intermediate_size": 128, "num_heads": 4, "num_kv_heads": 2, "head_dim": 16, "MAX_S": 8, "cache": "contiguous"}]
+        if quick
+        else [{"bits": 4, "B": 1, "T": 16, "hidden_size": 512, "intermediate_size": 2048, "num_heads": 8, "num_kv_heads": 2, "head_dim": 64, "MAX_S": 128, "cache": "contiguous"}]
+    )
+    base_backends = ["reference", "metal", "tiled", "fused_experimental"]
+    for shape in shapes:
+        cfg = LlamaLikeConfig(
+            hidden_size=shape["hidden_size"],
+            intermediate_size=shape["intermediate_size"],
+            num_attention_heads=shape["num_heads"],
+            num_key_value_heads=shape["num_kv_heads"],
+            head_dim=shape["head_dim"],
+            num_hidden_layers=1,
+            max_position_embeddings=shape["MAX_S"],
+        ).validate()
+        weights = create_random_quantized_llama_layer_weights(cfg, bits=shape["bits"], group_size=32, dtype=dtype, seed=shape["bits"] + shape["head_dim"])
+        inputs = mx.random.normal((shape["B"], shape["T"], shape["hidden_size"])).astype(dtype)
+        cos = mx.random.normal((shape["MAX_S"] + 4, shape["head_dim"] // 2)).astype(mx.float32)
+        sin = mx.random.normal((shape["MAX_S"] + 4, shape["head_dim"] // 2)).astype(mx.float32)
+        backends = _choose_backends("llama_layer_decode", shape, dtype_name, "tiled", use_autotune, extra={"cache": shape["cache"], "bits": shape["bits"]}, candidates=base_backends)
+        for backend in backends:
+            _run(
+                results,
+                "llama_layer_decode",
+                "llama_layer_decode_loop",
+                backend,
+                dtype_name,
+                shape,
+                lambda b=backend, xx=inputs, ww=weights, co=cos, si=sin, cf=cfg, cl=shape["cache"], sh=shape: time_fn(
+                    lambda: llama_layer_decode_loop(
+                        xx,
+                        ww,
+                        init_llama_layer_cache(cf, sh["B"], sh["MAX_S"], cache_layout=cl, dtype=dtype),
+                        co,
+                        si,
+                        cf,
+                        backend_preset=b,
+                        cache_layout=cl,
+                    ),
+                    warmup=3,
+                    iters=iters,
+                ),
+                fail_fast,
+            )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick", action="store_true")
@@ -443,10 +563,13 @@ def main():
     _decode_block_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _quantized_decode_block_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _quantized_mlp_block_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
+    _fused_quantized_mlp_cases(results, dtype, args.dtype, quick, iters, args.fail_fast, args.use_autotune)
     _gqa_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
+    _gqa_prefill_cases(results, dtype, args.dtype, quick, iters, args.fail_fast, args.use_autotune)
     _threadgroup_attention_v2_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _simdgroup_attention_cases(results, dtype, args.dtype, quick, iters)
     _toy_transformer_decode_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
+    _llama_layer_decode_cases(results, dtype, args.dtype, quick, iters, args.fail_fast, args.use_autotune)
 
     payload = {
         "system_info": collect_system_info(),

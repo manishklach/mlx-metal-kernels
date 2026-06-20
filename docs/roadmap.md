@@ -23,10 +23,16 @@ This repo is evolving as an experimental Apple Silicon MLX/Metal kernel lab for 
 - [x] Quantized MLP block
 - [x] GQA/MQA reference and composed decode support
 - [x] Checkpoint layout loader scaffold
-- [ ] Optimized GQA Metal decode attention
-- [ ] Fused q4 MLP kernel
-- [ ] Real checkpoint adapter
+- [x] Optimized GQA Metal decode attention
+- [x] Fused q4/q8 MLP kernel experiments
+- [x] Real checkpoint adapter scaffold
+- [x] GQA/MQA prefill attention
+- [x] Full fused Llama-like decode layer experiment
+- [x] Checkpoint-to-quantized packaging
 - [ ] Tokenizer and sampling demo
+- [ ] Multi-layer decode stack
+- [ ] Production checkpoint converter
+- [ ] Calibration-aware quantization
 
 ## Development pattern
 
@@ -107,20 +113,50 @@ The intended workflow for each new primitive is:
 - add optional Metal GQA decode kernels once the reference and composed paths are well covered
 - keep equal-head kernels unchanged and keep GQA optimized paths explicit until locally benchmarked
 
-### v0.22 fused q4 MLP kernel
+### v0.22 fused q4/q8 MLP kernel experiments
 
-- explore a dedicated fused q4 MLP kernel after the composition-first MLP path is validated
-- prefer narrow, benchmarkable kernel experiments over sweeping backend-default changes
+- add explicit-only fused gate/up plus SwiGLU experiments on top of the stable composition-first MLP path
+- prefer narrow, benchmarkable fusion steps over sweeping backend-default changes
 
 ### v0.23 real checkpoint adapter
 
 - extend model-level scaffolding toward a more practical checkpoint adapter
 - still avoid overclaiming production inference support until end-to-end validation exists
 
-### v0.24 tokenizer and sampling demo
+### v0.24 GQA prefill attention
 
-- add a minimal tokenizer plus sampling-loop demonstration once checkpoint and adapter contracts stabilize
-- keep it clearly separate from any production serving claim
+- extend the GQA work from decode to prefill attention
+- keep optimized prefill kernels explicit until correctness and benchmark coverage are in place
+
+### v0.25 full fused Llama-like decode layer experiment
+
+- explore a larger decode-layer fusion experiment once attention, quantized block, and MLP components are individually validated
+- keep production claims out of scope until the composed path is benchmarked and debuggable
+
+### v0.26 checkpoint-to-quantized packaging
+
+- connect validated checkpoint layouts to deterministic q4/q8 packaging helpers
+- keep quantization and calibration concerns out of the main runtime path until they are independently testable
+
+### v0.27 tokenizer and sampling demo
+
+- add a minimal tokenizer and sampling demo once checkpoint and runtime scaffolding are better aligned
+- keep it separate from any production-serving claim
+
+### v0.28 multi-layer decode stack
+
+- extend the single-layer experiment into an explicit multi-layer decode stack
+- keep it benchmarkable and debuggable before treating it like a general runtime
+
+### v0.29 production checkpoint converter
+
+- extend the local packaging scaffold into a more practical checkpoint conversion flow
+- keep dependency growth and model-format assumptions explicit
+
+### v0.30 calibration-aware quantization
+
+- add validation-friendly hooks for richer quantization workflows
+- keep advanced quantization claims out of scope until they are benchmarked and compared carefully
 
 ## Long-term goal
 

@@ -13,10 +13,13 @@ DEFAULT_AUTOTUNE_PATH = "~/.cache/mlx-metal-kernels/autotune_results.json"
 
 _DEFAULT_BACKENDS = {
     "fast_attention": "baseline",
+    "gqa_attention": "metal_gqa",
     "decode_attention": "metal",
     "paged_decode_attention": "metal",
     "q4_matvec_decode": "metal_parallel",
     "q8_matvec_decode": "metal_parallel",
+    "quantized_mlp_block": "tiled",
+    "llama_layer_decode": "tiled",
 }
 
 

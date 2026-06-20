@@ -17,6 +17,8 @@ _Q4_MATVEC_PARALLEL_KERNEL = _KERNEL_DIR / "q4_matvec_decode_parallel.metal"
 _Q8_MATVEC_PARALLEL_KERNEL = _KERNEL_DIR / "q8_matvec_decode_parallel.metal"
 _Q4_MATVEC_TILED_KERNEL = _KERNEL_DIR / "q4_matvec_decode_tiled.metal"
 _Q8_MATVEC_TILED_KERNEL = _KERNEL_DIR / "q8_matvec_decode_tiled.metal"
+_Q4_GATE_UP_MATVEC_TILED_KERNEL = _KERNEL_DIR / "q4_gate_up_matvec_tiled.metal"
+_Q8_GATE_UP_MATVEC_TILED_KERNEL = _KERNEL_DIR / "q8_gate_up_matvec_tiled.metal"
 _THREADS = 256
 _MATVEC_PARALLEL_THREADS = 128
 _MATVEC_TILED_THREADS = 128
@@ -128,6 +130,28 @@ def _get_q8_matvec_tiled_kernel(dtype_name: str, source: str, header: str):
         name="q8_matvec_decode_tiled_forward",
         input_names=["x", "q_w", "scales", "zeros", "meta"],
         output_names=["y"],
+        source=source,
+        header=header,
+    )
+
+
+@lru_cache(maxsize=16)
+def _get_q4_gate_up_matvec_tiled_kernel(dtype_name: str, source: str, header: str):
+    return mx.fast.metal_kernel(
+        name="q4_gate_up_matvec_tiled_forward",
+        input_names=["x", "gate_packed", "up_packed", "gate_scales", "up_scales", "gate_zeros", "up_zeros", "meta"],
+        output_names=["gate", "up"],
+        source=source,
+        header=header,
+    )
+
+
+@lru_cache(maxsize=16)
+def _get_q8_gate_up_matvec_tiled_kernel(dtype_name: str, source: str, header: str):
+    return mx.fast.metal_kernel(
+        name="q8_gate_up_matvec_tiled_forward",
+        input_names=["x", "gate_q", "up_q", "gate_scales", "up_scales", "gate_zeros", "up_zeros", "meta"],
+        output_names=["gate", "up"],
         source=source,
         header=header,
     )
@@ -332,11 +356,61 @@ def _validate_matvec_input_dtype(x2d: mx.array):
         raise TypeError(f"x dtype must be float16 or bfloat16, got {x2d.dtype}")
 
 
+def _normalize_hidden_rows_input(x: mx.array) -> tuple[mx.array, tuple[int, ...], int, int]:
+    if x.ndim == 2:
+        return x, x.shape, x.shape[0], x.shape[1]
+    if x.ndim == 3:
+        rows = x.shape[0] * x.shape[1]
+        return x.reshape(rows, x.shape[2]), x.shape, rows, x.shape[2]
+    raise ValueError(f"x must have shape [rows,K] or [B,S,K], got {x.shape}")
+
+
+def _restore_hidden_rows_output(y2d: mx.array, original_shape: tuple[int, ...]) -> mx.array:
+    if len(original_shape) == 2:
+        return y2d
+    return y2d.reshape(original_shape[:-1] + (y2d.shape[-1],))
+
+
 def _zeros_arr_for_matvec(N: int, K: int, scales: mx.array, zeros: mx.array | None, group_size: int):
     groups = _validate_group_params(N, K, scales, zeros, group_size)
     has_zero = 1 if zeros is not None else 0
     zeros_arr = zeros if zeros is not None else mx.zeros((N, groups), dtype=scales.dtype)
     return zeros_arr, groups, has_zero
+
+
+def _validate_gate_up_shapes(
+    x2d: mx.array,
+    gate_w: mx.array,
+    up_w: mx.array,
+    gate_scales: mx.array,
+    up_scales: mx.array,
+    gate_zeros: mx.array | None,
+    up_zeros: mx.array | None,
+    *,
+    bits: int,
+    group_size: int,
+) -> tuple[int, int, int]:
+    _validate_matvec_input_dtype(x2d)
+    if bits not in (4, 8):
+        raise ValueError(f"bits must be 4 or 8, got {bits}")
+    rows, k_dim = x2d.shape
+    if gate_w.ndim != 2 or up_w.ndim != 2:
+        raise ValueError(f"gate_w and up_w must be 2-D, got {gate_w.shape}, {up_w.shape}")
+    if gate_w.shape != up_w.shape:
+        raise ValueError(f"gate_w and up_w must have identical shapes, got {gate_w.shape}, {up_w.shape}")
+    out_dim = gate_w.shape[0]
+    if bits == 4:
+        expected_cols = math.ceil(k_dim / 2)
+        if gate_w.shape[1] != expected_cols:
+            raise ValueError(f"q4 gate/up weights must have shape [{out_dim},{expected_cols}], got {gate_w.shape}")
+    else:
+        if gate_w.shape[1] != k_dim:
+            raise ValueError(f"q8 gate/up weights must have shape [{out_dim},{k_dim}], got {gate_w.shape}")
+    groups = _validate_group_params(out_dim, k_dim, gate_scales, gate_zeros, group_size)
+    up_groups = _validate_group_params(out_dim, k_dim, up_scales, up_zeros, group_size)
+    if groups != up_groups:
+        raise ValueError(f"gate and up scale group counts must match, got {groups} and {up_groups}")
+    return rows, k_dim, out_dim
 
 
 def _q4_matvec_decode_parallel(
@@ -556,3 +630,110 @@ def q8_matvec_decode(
         grid=(B * N, 1, 1),
         threadgroup=(1, 1, 1),
     )[0]
+
+
+def q4_gate_up_matvec_tiled(
+    x: mx.array,
+    gate_packed: mx.array,
+    up_packed: mx.array,
+    gate_scales: mx.array,
+    up_scales: mx.array,
+    gate_zeros: mx.array | None = None,
+    up_zeros: mx.array | None = None,
+    *,
+    group_size: int = 32,
+):
+    x2d, original_shape, rows, k_dim = _normalize_hidden_rows_input(x)
+    _, _, out_dim = _validate_gate_up_shapes(
+        x2d,
+        gate_packed,
+        up_packed,
+        gate_scales,
+        up_scales,
+        gate_zeros,
+        up_zeros,
+        bits=4,
+        group_size=group_size,
+    )
+    dtype = x2d.dtype
+    source = _load_source(_Q4_GATE_UP_MATVEC_TILED_KERNEL)
+    header = _make_header(dtype)
+    kernel = _get_q4_gate_up_matvec_tiled_kernel(str(dtype), source, header)
+    gate_zeros_arr, groups, has_gate_zero = _zeros_arr_for_matvec(out_dim, k_dim, gate_scales, gate_zeros, group_size)
+    up_zeros_arr, _, has_up_zero = _zeros_arr_for_matvec(out_dim, k_dim, up_scales, up_zeros, group_size)
+    k_packed = gate_packed.shape[1]
+    tiles_per_row = math.ceil(out_dim / _MATVEC_N_TILE)
+    meta = mx.array(
+        [rows, k_dim, out_dim, k_packed, group_size, groups, has_gate_zero, has_up_zero, _MATVEC_N_TILE],
+        dtype=mx.int32,
+    )
+    gate2d, up2d = kernel(
+        inputs=[
+            x2d.astype(dtype),
+            gate_packed.astype(mx.uint8),
+            up_packed.astype(mx.uint8),
+            gate_scales.astype(mx.float32),
+            up_scales.astype(mx.float32),
+            gate_zeros_arr.astype(mx.float32),
+            up_zeros_arr.astype(mx.float32),
+            meta,
+        ],
+        output_shapes=[(rows, out_dim), (rows, out_dim)],
+        output_dtypes=[dtype, dtype],
+        grid=(rows * tiles_per_row * _MATVEC_TILED_THREADS, 1, 1),
+        threadgroup=(_MATVEC_TILED_THREADS, 1, 1),
+    )
+    return _restore_hidden_rows_output(gate2d, original_shape), _restore_hidden_rows_output(up2d, original_shape)
+
+
+def q8_gate_up_matvec_tiled(
+    x: mx.array,
+    gate_q: mx.array,
+    up_q: mx.array,
+    gate_scales: mx.array,
+    up_scales: mx.array,
+    gate_zeros: mx.array | None = None,
+    up_zeros: mx.array | None = None,
+    *,
+    group_size: int = 32,
+):
+    x2d, original_shape, rows, k_dim = _normalize_hidden_rows_input(x)
+    _, _, out_dim = _validate_gate_up_shapes(
+        x2d,
+        gate_q,
+        up_q,
+        gate_scales,
+        up_scales,
+        gate_zeros,
+        up_zeros,
+        bits=8,
+        group_size=group_size,
+    )
+    dtype = x2d.dtype
+    source = _load_source(_Q8_GATE_UP_MATVEC_TILED_KERNEL)
+    header = _make_header(dtype)
+    kernel = _get_q8_gate_up_matvec_tiled_kernel(str(dtype), source, header)
+    gate_zeros_arr, groups, has_gate_zero = _zeros_arr_for_matvec(out_dim, k_dim, gate_scales, gate_zeros, group_size)
+    up_zeros_arr, _, has_up_zero = _zeros_arr_for_matvec(out_dim, k_dim, up_scales, up_zeros, group_size)
+    tiles_per_row = math.ceil(out_dim / _MATVEC_N_TILE)
+    meta = mx.array(
+        [rows, k_dim, out_dim, group_size, groups, has_gate_zero, has_up_zero, _MATVEC_N_TILE],
+        dtype=mx.int32,
+    )
+    gate2d, up2d = kernel(
+        inputs=[
+            x2d.astype(dtype),
+            gate_q.astype(mx.uint8),
+            up_q.astype(mx.uint8),
+            gate_scales.astype(mx.float32),
+            up_scales.astype(mx.float32),
+            gate_zeros_arr.astype(mx.float32),
+            up_zeros_arr.astype(mx.float32),
+            meta,
+        ],
+        output_shapes=[(rows, out_dim), (rows, out_dim)],
+        output_dtypes=[dtype, dtype],
+        grid=(rows * tiles_per_row * _MATVEC_TILED_THREADS, 1, 1),
+        threadgroup=(_MATVEC_TILED_THREADS, 1, 1),
+    )
+    return _restore_hidden_rows_output(gate2d, original_shape), _restore_hidden_rows_output(up2d, original_shape)

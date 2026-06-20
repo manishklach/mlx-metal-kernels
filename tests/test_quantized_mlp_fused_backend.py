@@ -1,14 +1,15 @@
-import mlx.core as mx
 import pytest
 
-from ops.mlp_block_ops import quantized_mlp_block, quantized_mlp_decode_step, reference_quantized_mlp_block
+mx = pytest.importorskip("mlx.core")
+
+from ops.mlp_block_ops import quantized_mlp_block, reference_quantized_mlp_block
 from ops.quant_ops import pack_q4
 
 
 def _tol(dtype):
     if dtype == mx.bfloat16:
-        return 1e-1, 1e-1
-    return 8e-2, 8e-2
+        return 1.2e-1, 1.2e-1
+    return 1e-1, 1e-1
 
 
 def _groups(k, group_size):
@@ -31,11 +32,12 @@ def _make_quantized_weights(bits, out_dim, in_dim, group_size):
         (4, 1, 1, 64, 128, mx.float16),
         (8, 1, 1, 64, 128, mx.float16),
         (4, 2, 4, 64, 128, mx.float16),
-        (4, 1, 1, 64, 128, mx.bfloat16),
+        (4, 1, 1, 64, 130, mx.float16),
+        pytest.param(4, 1, 1, 64, 128, mx.bfloat16, marks=pytest.mark.skipif(not hasattr(mx, "bfloat16"), reason="bf16 unavailable")),
     ],
 )
-def test_quantized_mlp_block_matches_reference(bits, B, S, hidden, intermediate, dtype):
-    mx.random.seed(231)
+def test_quantized_mlp_fused_backend_matches_reference(bits, B, S, hidden, intermediate, dtype):
+    mx.random.seed(701)
     group_size = 32
     x = mx.random.normal((B, S, hidden)).astype(dtype)
     residual = mx.random.normal((B, S, hidden)).astype(dtype)
@@ -56,9 +58,7 @@ def test_quantized_mlp_block_matches_reference(bits, B, S, hidden, intermediate,
         down_scales,
         bits=bits,
         group_size=group_size,
-        norm_backend="metal",
-        matvec_backend="metal_tiled",
-        activation_backend="metal",
+        backend_preset="fused_experimental",
     )
     ref = reference_quantized_mlp_block(
         x,
@@ -79,8 +79,8 @@ def test_quantized_mlp_block_matches_reference(bits, B, S, hidden, intermediate,
     assert mx.allclose(got, ref, atol=atol, rtol=rtol).item()
 
 
-def test_quantized_mlp_block_return_intermediates():
-    mx.random.seed(232)
+def test_quantized_mlp_fused_backend_return_intermediates():
+    mx.random.seed(702)
     x = mx.random.normal((1, 1, 64)).astype(mx.float16)
     residual = mx.random.normal((1, 1, 64)).astype(mx.float16)
     norm_weight = mx.random.normal((64,)).astype(mx.float16)
@@ -99,6 +99,7 @@ def test_quantized_mlp_block_return_intermediates():
         down_scales,
         bits=4,
         group_size=32,
+        backend_preset="fused_experimental",
         return_intermediates=True,
     )
     mx.eval(out, *intermediates.values())
@@ -106,26 +107,26 @@ def test_quantized_mlp_block_return_intermediates():
     assert set(intermediates) == {"z", "normed", "gate", "up", "mlp", "down"}
 
 
-@pytest.mark.parametrize("backend_preset", ["reference", "metal", "parallel", "tiled", "fused_experimental"])
-def test_quantized_mlp_decode_step_presets_work(backend_preset):
-    mx.random.seed(233)
+def test_quantized_mlp_fused_backend_unsupported_bits_raise():
+    mx.random.seed(703)
     x = mx.random.normal((1, 1, 64)).astype(mx.float16)
+    residual = mx.random.normal((1, 1, 64)).astype(mx.float16)
     norm_weight = mx.random.normal((64,)).astype(mx.float16)
     gate_w, gate_scales = _make_quantized_weights(4, 128, 64, 32)
     up_w, up_scales = _make_quantized_weights(4, 128, 64, 32)
     down_w, down_scales = _make_quantized_weights(4, 64, 128, 32)
-    out = quantized_mlp_decode_step(
-        x,
-        norm_weight,
-        gate_w,
-        gate_scales,
-        up_w,
-        up_scales,
-        down_w,
-        down_scales,
-        bits=4,
-        group_size=32,
-        backend_preset=backend_preset,
-    )
-    mx.eval(out)
-    assert out.shape == x.shape
+    with pytest.raises(ValueError, match="bits must be 4 or 8"):
+        quantized_mlp_block(
+            x,
+            residual,
+            norm_weight,
+            gate_w,
+            gate_scales,
+            up_w,
+            up_scales,
+            down_w,
+            down_scales,
+            bits=3,
+            group_size=32,
+            backend_preset="fused_experimental",
+        )

@@ -2,7 +2,7 @@
 
 Experimental MLX custom Metal kernels for Apple Silicon LLM inference.
 
-This repository is a correctness-first kernel lab for exploring how far Apple Silicon GPUs can be pushed through MLX custom Metal kernels. It includes attention kernels, decode attention, KV-cache and paged KV-cache operations, q4/q8 quantized matvec kernels, RMSNorm, RoPE, SwiGLU, fused decode helpers, quantized decode blocks, quantized MLP blocks, toy transformer-layer benchmarks, autotuning infrastructure, and Llama-like model integration scaffolding.
+This repository is a correctness-first kernel lab for exploring how far Apple Silicon GPUs can be pushed through MLX custom Metal kernels. It includes attention kernels, decode attention, KV-cache and paged KV-cache operations, q4/q8 quantized matvec kernels, RMSNorm, RoPE, SwiGLU, fused decode helpers, quantized decode blocks, quantized MLP blocks, experimental fused q4/q8 MLP kernels, toy transformer-layer benchmarks, autotuning infrastructure, and Llama-like model integration scaffolding.
 
 The project is not a production inference engine. It is an experimental research repo focused on building, validating, benchmarking, and iterating on Mac-native transformer inference primitives.
 
@@ -24,6 +24,7 @@ The repo currently covers several layers of the local LLM inference stack:
 - threadgroup and simdgroup Metal experiments
 - q4/q8 dequantization and quantized matvec
 - multi-output tiled quantized GEMV
+- experimental fused q4/q8 MLP kernels
 - RMSNorm, RoPE, SwiGLU, and residual helpers
 - fused and quantized decode blocks
 - quantized MLP blocks
@@ -31,6 +32,7 @@ The repo currently covers several layers of the local LLM inference stack:
 - backend autotuning for Apple Silicon machines
 - Llama-like configuration and weight-layout scaffolding
 - GQA/MQA decode support
+- checkpoint-to-quantized packaging scaffold
 
 ## What this project is not
 
@@ -61,6 +63,7 @@ Performance claims should only be made from benchmark data generated on a specif
 - Decode loop helpers
 - Fused decode blocks from QKV
 - GQA/MQA decode-block composition
+- GQA/MQA prefill attention
 
 ### Transformer primitives
 
@@ -83,10 +86,12 @@ Performance claims should only be made from benchmark data generated on a specif
 - quantized output projection
 - quantized decode block
 - quantized MLP block
+- fused q4/q8 MLP experiments
 
 ### Model-level scaffolding
 
 - Toy transformer-layer decode benchmark
+- Full Llama-like decode layer experiment
 - Llama-like config
 - Weight-layout mapping helpers
 - Model-adapter scaffold
@@ -130,6 +135,7 @@ Current capabilities include:
 - RMSNorm, RoPE, SwiGLU, residual, and QKV layout helpers
 - fused and quantized decode-block composition
 - quantized MLP-block composition
+- explicit-only fused q4/q8 MLP experiments
 - toy transformer-layer decode benchmark
 - Llama-like config, weight layout, and model-adapter scaffolding
 - GQA/MQA reference and composed decode support
@@ -218,6 +224,7 @@ python benchmarks/bench_paged_decode_attention.py --B 2 --MAX_S 128 --PAGE_SIZE 
 python benchmarks/bench_decode_block.py --B 2 --MAX_S 128 --T 32 --H 8 --D 64 --dtype float16 --backend all
 python benchmarks/bench_gqa_decode_attention.py --B 1 --MAX_S 128 --Hq 32 --Hkv 8 --D 128 --dtype float16 --cache contiguous --backend all
 python benchmarks/bench_gqa_decode_block.py --B 1 --MAX_S 128 --Hq 32 --Hkv 8 --D 128 --T 16 --dtype float16 --cache contiguous
+python benchmarks/bench_gqa_attention.py --B 1 --S 128 --Hq 32 --Hkv 8 --D 128 --dtype float16 --causal --backend all --validate
 ```
 
 ### Quantization
@@ -233,8 +240,16 @@ python benchmarks/bench_quant_matvec_tiled.py --bits 4 --B 1 --K 4096 --N 4096 -
 ```bash
 python benchmarks/bench_quantized_decode_block.py --bits 4 --cache contiguous --B 1 --K 4096 --H 32 --D 128 --MAX_S 128 --T 16 --dtype float16 --backend-preset parallel
 python benchmarks/bench_quantized_mlp_block.py --bits 4 --B 1 --S 1 --hidden-size 4096 --intermediate-size 11008 --dtype float16 --backend-preset all
+python benchmarks/bench_fused_mlp_kernels.py --bits 4 --B 1 --S 1 --hidden-size 4096 --intermediate-size 11008 --dtype float16 --backend-preset all --validate
 python benchmarks/bench_toy_transformer_decode.py --cache contiguous --bits 4 --B 1 --K 512 --H 8 --D 64 --INTERMEDIATE 1024 --MAX_S 64 --T 8 --dtype float16 --backend-preset parallel
+python benchmarks/bench_llama_layer_decode.py --bits 4 --B 1 --T 16 --hidden-size 512 --intermediate-size 2048 --num-heads 8 --num-kv-heads 2 --head-dim 64 --MAX_S 128 --dtype float16 --backend-preset all --validate
 ```
+
+The fused MLP path is experimental and explicit-only. It does not replace the stable composition-first `quantized_mlp_block` path or default backend routing.
+
+GQA prefill avoids expanding KV heads to query heads in the optimized path.
+
+The full Llama-like decode layer experiment is a synthetic single-layer benchmark, not a full production model runtime.
 
 ### Full benchmark suite
 
@@ -338,6 +353,68 @@ python examples/fuse_qkv_demo.py
 ```
 
 This scaffold is intended to prepare the repo for future checkpoint adapter work without adding heavy dependencies.
+
+## Real checkpoint adapter scaffold
+
+The repo includes a dependency-light checkpoint adapter scaffold that connects local tensor stores or JSON manifests to the Llama-like config and kernel-facing weight layouts.
+
+Current scope:
+
+- in-memory tensor stores for tests and demos
+- manifest-backed shape-only tensor stores
+- optional safetensors store if `safetensors` is installed
+- Llama-style layer tensor validation
+- GQA-aware QKV shape handling
+- fused QKV creation from q/k/v tensors
+- quantized packaging specs for q4/q8 layouts
+
+Out of scope:
+
+- model downloads
+- tokenizer
+- sampling loop
+- production Llama or Mistral runtime
+- full checkpoint quantization or calibration
+
+Commands:
+
+```bash
+python examples/checkpoint_adapter_demo.py
+python examples/layer_weight_adapter_demo.py
+```
+
+```bash
+python examples/llama_layer_decode_demo.py
+```
+
+## Checkpoint-to-quantized packaging
+
+The repo includes a correctness-first scaffold for packaging local floating-point layer tensors into the q4/q8 layouts expected by the custom matvec kernels.
+
+Current scope:
+
+- groupwise q4/q8 quantization for local tensors
+- q4 packing compatible with repo kernels
+- scale tensor generation
+- symmetric zero-point materialization for kernel compatibility
+- fused QKV quantization
+- layer-level `QuantizedLlamaLayerPackage`
+- conversion to `LlamaLayerKernelWeights`
+
+Out of scope:
+
+- GPTQ, AWQ, or SmoothQuant
+- production calibration
+- model-quality preserving quantization
+- full checkpoint conversion CLI
+- tokenizer and sampling runtime
+
+Commands:
+
+```bash
+python examples/quantize_layer_demo.py
+python examples/checkpoint_to_quantized_demo.py
+```
 
 ## API examples
 
@@ -480,4 +557,4 @@ Experimental backends may be disabled by default until they are repeatedly valid
 - [x] Checkpoint layout loader scaffold
 - [ ] Optimized GQA Metal decode attention
 - [ ] Fused q4 MLP kernel
-- [ ] Real checkpoint adapter
+- [x] Real checkpoint adapter scaffold

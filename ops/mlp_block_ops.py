@@ -4,10 +4,17 @@ import math
 
 import mlx.core as mx
 
-from .activation_ops import reference_swiglu, swiglu
+from .activation_ops import fused_swiglu, reference_swiglu, swiglu
 from .fused_ops import reference_residual_add, residual_add
 from .norm_ops import reference_rms_norm, rms_norm
-from .quant_ops import q4_matvec_decode, q8_matvec_decode, reference_q4_matvec_decode, reference_q8_matvec_decode
+from .quant_ops import (
+    q4_gate_up_matvec_tiled,
+    q4_matvec_decode,
+    q8_gate_up_matvec_tiled,
+    q8_matvec_decode,
+    reference_q4_matvec_decode,
+    reference_q8_matvec_decode,
+)
 
 
 def _validate_bits(bits: int) -> int:
@@ -117,6 +124,111 @@ def swiglu_down_project(
     )
 
 
+def quantized_gate_up_projection(
+    x,
+    gate_w,
+    gate_scales,
+    up_w,
+    up_scales,
+    *,
+    gate_zeros=None,
+    up_zeros=None,
+    bits=4,
+    group_size=32,
+    backend="metal_tiled",
+):
+    _validate_bits(bits)
+    if backend == "reference":
+        gate = quantized_linear(
+            x,
+            gate_w,
+            gate_scales,
+            gate_zeros,
+            bits=bits,
+            group_size=group_size,
+            backend="reference",
+        )
+        up = quantized_linear(
+            x,
+            up_w,
+            up_scales,
+            up_zeros,
+            bits=bits,
+            group_size=group_size,
+            backend="reference",
+        )
+        return gate, up
+    if backend == "metal_tiled":
+        gate = quantized_linear(
+            x,
+            gate_w,
+            gate_scales,
+            gate_zeros,
+            bits=bits,
+            group_size=group_size,
+            backend="metal_tiled",
+        )
+        up = quantized_linear(
+            x,
+            up_w,
+            up_scales,
+            up_zeros,
+            bits=bits,
+            group_size=group_size,
+            backend="metal_tiled",
+        )
+        return gate, up
+    if backend != "metal_gate_up_tiled":
+        raise ValueError(
+            "backend must be one of 'reference', 'metal_tiled', 'metal_gate_up_tiled'"
+        )
+    if bits == 4:
+        return q4_gate_up_matvec_tiled(
+            x,
+            gate_w,
+            up_w,
+            gate_scales,
+            up_scales,
+            gate_zeros,
+            up_zeros,
+            group_size=group_size,
+        )
+    if bits == 8:
+        return q8_gate_up_matvec_tiled(
+            x,
+            gate_w,
+            up_w,
+            gate_scales,
+            up_scales,
+            gate_zeros,
+            up_zeros,
+            group_size=group_size,
+        )
+    raise ValueError(f"metal_gate_up_tiled supports only bits in {{4, 8}}, got {bits}")
+
+
+def _resolve_mlp_backends(
+    *,
+    backend_preset=None,
+    norm_backend="metal",
+    matvec_backend="metal_tiled",
+    activation_backend="metal",
+    residual_backend="metal",
+):
+    if backend_preset is None:
+        return norm_backend, matvec_backend, activation_backend, residual_backend
+    mapping = {
+        "reference": ("reference", "reference", "reference", "reference"),
+        "metal": ("metal", "metal", "metal", "metal"),
+        "parallel": ("metal", "metal_parallel", "metal", "metal"),
+        "tiled": ("metal", "metal_tiled", "metal", "metal"),
+        "fused_experimental": ("metal", "metal_gate_up_tiled", "metal_fused", "metal"),
+    }
+    if backend_preset not in mapping:
+        raise ValueError(f"backend_preset must be one of {tuple(mapping)}, got {backend_preset}")
+    return mapping[backend_preset]
+
+
 def reference_quantized_mlp_block(
     x,
     residual,
@@ -177,6 +289,7 @@ def quantized_mlp_block(
     bits=4,
     group_size=32,
     eps=1e-5,
+    backend_preset=None,
     norm_backend="metal",
     matvec_backend="metal_tiled",
     activation_backend="metal",
@@ -189,13 +302,36 @@ def quantized_mlp_block(
         raise ValueError(f"x and residual must have shape [B,S,D], got {x.shape}")
     if norm_weight.shape != (x.shape[-1],):
         raise ValueError(f"norm_weight must have shape {(x.shape[-1],)}, got {norm_weight.shape}")
+    norm_backend, matvec_backend, activation_backend, residual_backend = _resolve_mlp_backends(
+        backend_preset=backend_preset,
+        norm_backend=norm_backend,
+        matvec_backend=matvec_backend,
+        activation_backend=activation_backend,
+        residual_backend=residual_backend,
+    )
 
     z = reference_residual_add(x, residual) if residual_backend == "reference" else residual_add(x, residual, backend=residual_backend)
     normed = reference_rms_norm(z, norm_weight, eps=eps) if norm_backend == "reference" else rms_norm(z, norm_weight, eps=eps, backend=norm_backend)
-    gate = quantized_linear(normed, gate_w, gate_scales, gate_zeros, bits=bits, group_size=group_size, backend=matvec_backend)
-    up = quantized_linear(normed, up_w, up_scales, up_zeros, bits=bits, group_size=group_size, backend=matvec_backend)
-    mlp = reference_swiglu(gate, up) if activation_backend == "reference" else swiglu(gate, up, backend=activation_backend)
-    down = quantized_linear(mlp, down_w, down_scales, down_zeros, bits=bits, group_size=group_size, backend=matvec_backend)
+    gate, up = quantized_gate_up_projection(
+        normed,
+        gate_w,
+        gate_scales,
+        up_w,
+        up_scales,
+        gate_zeros=gate_zeros,
+        up_zeros=up_zeros,
+        bits=bits,
+        group_size=group_size,
+        backend=matvec_backend,
+    )
+    if activation_backend == "reference":
+        mlp = reference_swiglu(gate, up)
+    elif activation_backend == "metal_fused":
+        mlp = fused_swiglu(gate, up, backend="metal_fused")
+    else:
+        mlp = swiglu(gate, up, backend=activation_backend)
+    down_backend = "metal_tiled" if backend_preset == "fused_experimental" else matvec_backend
+    down = quantized_linear(mlp, down_w, down_scales, down_zeros, bits=bits, group_size=group_size, backend=down_backend)
     out = reference_residual_add(z, down) if residual_backend == "reference" else residual_add(z, down, backend=residual_backend)
     if not return_intermediates:
         return out
@@ -220,15 +356,6 @@ def quantized_mlp_decode_step(
     eps=1e-5,
     backend_preset="tiled",
 ):
-    mapping = {
-        "reference": ("reference", "reference", "reference", "reference"),
-        "metal": ("metal", "metal", "metal", "metal"),
-        "parallel": ("metal", "metal_parallel", "metal", "metal"),
-        "tiled": ("metal", "metal_tiled", "metal", "metal"),
-    }
-    if backend_preset not in mapping:
-        raise ValueError(f"backend_preset must be one of {tuple(mapping)}, got {backend_preset}")
-    norm_backend, matvec_backend, activation_backend, residual_backend = mapping[backend_preset]
     return quantized_mlp_block(
         x,
         x,
@@ -245,8 +372,5 @@ def quantized_mlp_decode_step(
         bits=bits,
         group_size=group_size,
         eps=eps,
-        norm_backend=norm_backend,
-        matvec_backend=matvec_backend,
-        activation_backend=activation_backend,
-        residual_backend=residual_backend,
+        backend_preset=backend_preset,
     )

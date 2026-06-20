@@ -1,10 +1,9 @@
 import argparse
-import time
 
 import mlx.core as mx
 
-from benchmark_utils import summarize_times, sync
-from ops.mlp_block_ops import quantized_mlp_block
+from benchmark_utils import dtype_from_string, time_fn
+from ops.mlp_block_ops import quantized_mlp_block, reference_quantized_mlp_block
 from ops.quant_ops import pack_q4
 
 
@@ -22,48 +21,43 @@ def _make_quantized_weights(bits, out_dim, in_dim, group_size):
     return q, scales
 
 
-def _backends_for_preset(preset):
-    mapping = {
-        "reference": ("reference", "reference", "reference", "reference"),
-        "metal": ("metal", "metal", "metal", "metal"),
-        "parallel": ("metal", "metal_parallel", "metal", "metal"),
-        "tiled": ("metal", "metal_tiled", "metal", "metal"),
-        "fused_experimental": ("metal", "metal_gate_up_tiled", "metal_fused", "metal"),
-    }
-    if preset == "all":
-        return ["reference", "metal", "parallel", "tiled", "fused_experimental"]
-    if preset not in mapping:
-        raise ValueError(f"Unsupported backend preset: {preset}")
-    return [preset]
+def _presets(selection):
+    if selection == "all":
+        return ["reference", "tiled", "fused_experimental"]
+    return [selection]
 
 
-def _preset_kwargs(preset):
-    mapping = {
-        "reference": ("reference", "reference", "reference", "reference"),
-        "metal": ("metal", "metal", "metal", "metal"),
-        "parallel": ("metal", "metal_parallel", "metal", "metal"),
-        "tiled": ("metal", "metal_tiled", "metal", "metal"),
-        "fused_experimental": ("metal", "metal_gate_up_tiled", "metal_fused", "metal"),
-    }
-    norm_backend, matvec_backend, activation_backend, residual_backend = mapping[preset]
-    return {
-        "norm_backend": norm_backend,
-        "matvec_backend": matvec_backend,
-        "activation_backend": activation_backend,
-        "residual_backend": residual_backend,
-    }
-
-
-def _time_preset(fn, warmup, iters):
-    for _ in range(warmup):
-        sync(fn())
-    samples = []
-    for _ in range(iters):
-        t0 = time.perf_counter()
-        sync(fn())
-        t1 = time.perf_counter()
-        samples.append((t1 - t0) * 1e3)
-    return summarize_times(samples)
+def _run_preset(preset, x, residual, norm_weight, gate_w, gate_scales, up_w, up_scales, down_w, down_scales, *, bits, group_size, iters):
+    if preset == "reference":
+        fn = lambda: reference_quantized_mlp_block(  # noqa: E731
+            x,
+            residual,
+            norm_weight,
+            gate_w,
+            gate_scales,
+            up_w,
+            up_scales,
+            down_w,
+            down_scales,
+            bits=bits,
+            group_size=group_size,
+        )
+    else:
+        fn = lambda: quantized_mlp_block(  # noqa: E731
+            x,
+            residual,
+            norm_weight,
+            gate_w,
+            gate_scales,
+            up_w,
+            up_scales,
+            down_w,
+            down_scales,
+            bits=bits,
+            group_size=group_size,
+            backend_preset=preset,
+        )
+    return time_fn(fn, warmup=3, iters=iters)
 
 
 def main():
@@ -75,12 +69,13 @@ def main():
     parser.add_argument("--intermediate-size", type=int, default=11008)
     parser.add_argument("--group-size", type=int, default=32)
     parser.add_argument("--dtype", choices=["float16", "bfloat16"], default="float16")
-    parser.add_argument("--backend-preset", choices=["reference", "metal", "parallel", "tiled", "fused_experimental", "all"], default="all")
+    parser.add_argument("--backend-preset", choices=["reference", "tiled", "fused_experimental", "all"], default="all")
     parser.add_argument("--iters", type=int, default=10)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--validate", action="store_true")
     args = parser.parse_args()
 
-    dtype = mx.float16 if args.dtype == "float16" else mx.bfloat16
+    dtype = dtype_from_string(args.dtype)
     mx.random.seed(args.seed)
 
     x = mx.random.normal((args.B, args.S, args.hidden_size)).astype(dtype)
@@ -90,11 +85,27 @@ def main():
     up_w, up_scales = _make_quantized_weights(args.bits, args.intermediate_size, args.hidden_size, args.group_size)
     down_w, down_scales = _make_quantized_weights(args.bits, args.hidden_size, args.intermediate_size, args.group_size)
 
+    reference_out = None
+    if args.validate:
+        reference_out = reference_quantized_mlp_block(
+            x,
+            residual,
+            norm_weight,
+            gate_w,
+            gate_scales,
+            up_w,
+            up_scales,
+            down_w,
+            down_scales,
+            bits=args.bits,
+            group_size=args.group_size,
+        )
+        mx.eval(reference_out)
+
     results = {}
-    for preset in _backends_for_preset(args.backend_preset):
-        kwargs = _preset_kwargs(preset)
-        timing = _time_preset(
-            lambda p=kwargs: quantized_mlp_block(
+    for preset in _presets(args.backend_preset):
+        if args.validate and preset != "reference":
+            got = quantized_mlp_block(
                 x,
                 residual,
                 norm_weight,
@@ -106,15 +117,29 @@ def main():
                 down_scales,
                 bits=args.bits,
                 group_size=args.group_size,
-                **p,
-            ),
-            warmup=3,
+                backend_preset=preset,
+            )
+            mx.eval(got)
+            if not mx.allclose(got, reference_out, atol=1e-1, rtol=1e-1).item():
+                raise AssertionError(f"{preset} failed validation against reference_quantized_mlp_block")
+        results[preset] = _run_preset(
+            preset,
+            x,
+            residual,
+            norm_weight,
+            gate_w,
+            gate_scales,
+            up_w,
+            up_scales,
+            down_w,
+            down_scales,
+            bits=args.bits,
+            group_size=args.group_size,
             iters=args.iters,
         )
-        results[preset] = timing
 
     reference_ms = results.get("reference", {}).get("mean_ms")
-    metal_ms = results.get("metal", {}).get("mean_ms")
+    tiled_ms = results.get("tiled", {}).get("mean_ms")
     rows = args.B * args.S
     for preset, timing in results.items():
         mean_ms = timing["mean_ms"]
@@ -126,8 +151,8 @@ def main():
         )
         if reference_ms is not None and preset != "reference":
             line += f" speedup_vs_reference={reference_ms / mean_ms:.3f}"
-        if metal_ms is not None and preset not in ("reference", "metal"):
-            line += f" speedup_vs_metal={metal_ms / mean_ms:.3f}"
+        if tiled_ms is not None and preset in ("reference", "fused_experimental"):
+            line += f" speedup_vs_tiled={tiled_ms / mean_ms:.3f}"
         print(line)
 
 

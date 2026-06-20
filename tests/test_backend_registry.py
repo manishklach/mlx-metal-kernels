@@ -24,6 +24,9 @@ def test_list_ops_includes_expected_ops():
     assert "paged_decode_attention" in ops
     assert "q4_matvec_decode" in ops
     assert "q8_matvec_decode" in ops
+    assert "quantized_mlp_block" in ops
+    assert "gqa_attention" in ops
+    assert "llama_layer_decode" in ops
 
 
 def test_get_candidate_backends_and_validate():
@@ -56,3 +59,33 @@ def test_filter_backends_for_shape_removes_simdgroup_for_bf16():
     filtered = module.filter_backends_for_shape("fast_attention", {"D": 64}, "bfloat16", backends)
     assert "baseline" in filtered
     assert "simdgroup_d64" not in filtered
+
+
+def test_filter_backends_for_shape_quantized_mlp_fused_experimental():
+    module = _load_module()
+    backends = ["reference", "tiled", "fused_experimental"]
+    filtered_fp16 = module.filter_backends_for_shape("quantized_mlp_block", {"bits": 4}, "float16", backends)
+    assert "fused_experimental" in filtered_fp16
+
+    filtered_bf16 = module.filter_backends_for_shape("quantized_mlp_block", {"bits": 4}, "bfloat16", backends)
+    assert "fused_experimental" not in filtered_bf16
+
+
+def test_filter_backends_for_shape_gqa_attention():
+    module = _load_module()
+    backends = ["reference", "metal_gqa", "metal_gqa_threadgroup"]
+    filtered = module.filter_backends_for_shape("gqa_attention", {"Hq": 4, "Hkv": 2, "D": 64}, "float16", backends)
+    assert "metal_gqa" in filtered
+    assert "metal_gqa_threadgroup" in filtered
+
+    invalid = module.filter_backends_for_shape("gqa_attention", {"Hq": 3, "Hkv": 2, "D": 64}, "float16", backends)
+    assert invalid == ["reference"]
+
+
+def test_filter_backends_for_shape_llama_layer_decode():
+    module = _load_module()
+    backends = ["reference", "metal", "tiled", "fused_experimental"]
+    filtered = module.filter_backends_for_shape("llama_layer_decode", {"bits": 4, "D": 64}, "float16", backends)
+    assert "fused_experimental" in filtered
+    filtered_bf16 = module.filter_backends_for_shape("llama_layer_decode", {"bits": 4, "D": 64}, "bfloat16", backends)
+    assert "fused_experimental" not in filtered_bf16

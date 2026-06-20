@@ -1,4 +1,4 @@
-from .activation_ops import reference_swiglu, swiglu
+from .activation_ops import fused_swiglu, reference_swiglu, swiglu
 from .attention_ops import fast_attention, reference_attention, fast_attention_with_split, optimal_num_splits
 from .decode_ops import decode_attention, decode_step, reference_decode_attention, reference_decode_step
 from .decode_block_ops import (
@@ -21,11 +21,14 @@ from .fused_ops import (
 )
 from .gqa_ops import (
     expand_kv_heads_reference,
+    gqa_attention,
     gqa_decode_block_from_qkv,
     gqa_group_size,
     maybe_expand_kv_heads_reference,
     paged_gqa_decode_block_from_qkv,
     q_head_to_kv_head,
+    reference_gqa_attention,
+    reference_gqa_attention_via_expansion,
     reference_gqa_decode_attention,
     reference_gqa_decode_block_from_qkv,
     reference_gqa_qkv_split,
@@ -36,7 +39,21 @@ from .gqa_ops import (
 )
 from .kv_cache_ops import kv_cache_update, reference_kv_cache_update
 from .layout_ops import qkv_split, qkv_split_rope, reference_qkv_split, reference_qkv_split_rope
+from .llama_layer_ops import (
+    LlamaLayerBackendConfig,
+    LlamaLayerKernelWeights,
+    create_random_quantized_llama_layer_weights,
+    fused_experimental_backend_config,
+    init_llama_layer_cache,
+    llama_layer_decode_loop,
+    llama_layer_decode_step,
+    metal_backend_config,
+    reference_backend_config,
+    reference_llama_layer_decode_step,
+    tiled_backend_config,
+)
 from .mlp_block_ops import (
+    quantized_gate_up_projection,
     quantized_linear,
     quantized_mlp_block,
     quantized_mlp_decode_step,
@@ -62,6 +79,8 @@ from .quant_ops import (
     groupwise_dequant,
     pack_q4,
     q4_matvec_decode,
+    q4_gate_up_matvec_tiled,
+    q8_gate_up_matvec_tiled,
     q8_matvec_decode,
     reference_dequant_q4,
     reference_dequant_q8,
@@ -118,6 +137,8 @@ __all__ = [
     "reference_qkv_split_rope",
     "reference_dequant_q4",
     "reference_dequant_q8",
+    "reference_gqa_attention",
+    "reference_gqa_attention_via_expansion",
     "reference_gqa_decode_attention",
     "reference_gqa_decode_block_from_qkv",
     "reference_gqa_qkv_split",
@@ -138,7 +159,9 @@ __all__ = [
     "dequant_q4",
     "dequant_q8",
     "expand_kv_heads_reference",
+    "fused_swiglu",
     "fused_decode_step_from_qkv",
+    "gqa_attention",
     "gqa_decode_block_from_qkv",
     "gqa_group_size",
     "groupwise_dequant",
@@ -151,11 +174,14 @@ __all__ = [
     "pack_q4",
     "quantized_linear",
     "quantized_decode_block",
+    "quantized_gate_up_projection",
     "quantized_mlp_block",
     "quantized_mlp_decode_step",
     "quantized_output_projection",
     "quantized_qkv_projection",
     "q4_matvec_decode",
+    "q4_gate_up_matvec_tiled",
+    "q8_gate_up_matvec_tiled",
     "q8_matvec_decode",
     "q_head_to_kv_head",
     "qkv_rope_cache_update",
@@ -173,4 +199,15 @@ __all__ = [
     "validate_gqa_heads",
     "fast_attention_with_split",
     "optimal_num_splits",
+    "LlamaLayerBackendConfig",
+    "LlamaLayerKernelWeights",
+    "create_random_quantized_llama_layer_weights",
+    "fused_experimental_backend_config",
+    "init_llama_layer_cache",
+    "llama_layer_decode_loop",
+    "llama_layer_decode_step",
+    "metal_backend_config",
+    "reference_backend_config",
+    "reference_llama_layer_decode_step",
+    "tiled_backend_config",
 ]

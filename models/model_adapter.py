@@ -85,6 +85,7 @@ class LlamaLikeKernelAdapter:
                 "down_proj": (self.config.hidden_size, self.config.intermediate_size),
             },
             "gqa_supported": True,
+            "gqa_prefill_supported": True,
         }
 
     def choose_backend(self, op_name: str, shape: dict, dtype) -> str:
