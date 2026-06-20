@@ -1,39 +1,18 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from pathlib import Path
 
 import mlx.core as mx
 
 from .decode_ops import decode_attention, reference_decode_attention
+from .kernel_utils import KERNEL_DIR, make_metal_header, load_metal_source
 from .kv_cache_ops import kv_cache_update, normalize_positions, reference_kv_cache_update
 from .layout_ops import qkv_split_rope, reference_qkv_split_rope, _validate_qkv_input, _validate_rope_inputs
 
-_KERNEL_DIR = Path(__file__).resolve().parent.parent / "kernels"
-_QKV_CACHE_KERNEL = _KERNEL_DIR / "qkv_split_rope_cache_update.metal"
-_RESIDUAL_ADD_KERNEL = _KERNEL_DIR / "residual_add.metal"
-_RMSNORM_RESIDUAL_KERNEL = _KERNEL_DIR / "rmsnorm_residual.metal"
+_QKV_CACHE_KERNEL = KERNEL_DIR / "qkv_split_rope_cache_update.metal"
+_RESIDUAL_ADD_KERNEL = KERNEL_DIR / "residual_add.metal"
+_RMSNORM_RESIDUAL_KERNEL = KERNEL_DIR / "rmsnorm_residual.metal"
 _THREADS = 256
-
-
-def _make_header(dtype: mx.Dtype) -> str:
-    if dtype == mx.bfloat16:
-        elem_type = "bfloat"
-    elif dtype == mx.float16:
-        elem_type = "half"
-    else:
-        raise TypeError(f"fused ops support only float16/bfloat16, got {dtype}")
-    return f"""
-#include <metal_stdlib>
-using namespace metal;
-#define ELEM_TYPE {elem_type}
-"""
-
-
-def _load_source(path: Path) -> str:
-    if not path.exists():
-        raise FileNotFoundError(f"Missing Metal kernel source: {path}")
-    return path.read_text()
 
 
 @lru_cache(maxsize=8)
@@ -145,7 +124,7 @@ def qkv_rope_cache_update(
         raise ValueError("backend must be one of 'reference', 'metal', 'auto'")
 
     dtype = qkv.dtype
-    source = _load_source(_QKV_CACHE_KERNEL)
+    source = load_metal_source(_QKV_CACHE_KERNEL)
     header = _make_header(dtype)
     kernel = _get_qkv_cache_kernel(str(dtype), source, header)
     meta = mx.array([B, MAX_S, H_val, D_val, cos_rows, input_layout], dtype=mx.int32)
@@ -179,7 +158,7 @@ def residual_add(x: mx.array, residual: mx.array, *, backend: str = "auto") -> m
     if backend_name != "metal":
         raise ValueError("backend must be one of 'reference', 'metal', 'auto'")
     dtype = x.dtype
-    source = _load_source(_RESIDUAL_ADD_KERNEL)
+    source = load_metal_source(_RESIDUAL_ADD_KERNEL)
     header = _make_header(dtype)
     kernel = _get_residual_add_kernel(str(dtype), source, header)
     meta = mx.array([x.size], dtype=mx.int32)
@@ -236,7 +215,7 @@ def rmsnorm_residual(
     rows = x.size // x.shape[-1]
     D = x.shape[-1]
     dtype = x.dtype
-    source = _load_source(_RMSNORM_RESIDUAL_KERNEL)
+    source = load_metal_source(_RMSNORM_RESIDUAL_KERNEL)
     header = _make_header(dtype)
     kernel = _get_rmsnorm_residual_kernel(str(dtype), source, header)
     meta = mx.array([rows, D], dtype=mx.int32)

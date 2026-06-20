@@ -1,36 +1,15 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from pathlib import Path
 
 import mlx.core as mx
 
+from .kernel_utils import KERNEL_DIR, make_metal_header, load_metal_source
 from .rope_ops import reference_apply_rope
 
-_KERNEL_DIR = Path(__file__).resolve().parent.parent / "kernels"
-_QKV_SPLIT_KERNEL = _KERNEL_DIR / "qkv_split.metal"
-_QKV_SPLIT_ROPE_KERNEL = _KERNEL_DIR / "qkv_split_rope.metal"
+_QKV_SPLIT_KERNEL = KERNEL_DIR / "qkv_split.metal"
+_QKV_SPLIT_ROPE_KERNEL = KERNEL_DIR / "qkv_split_rope.metal"
 _THREADS = 256
-
-
-def _make_header(dtype: mx.Dtype) -> str:
-    if dtype == mx.bfloat16:
-        elem_type = "bfloat"
-    elif dtype == mx.float16:
-        elem_type = "half"
-    else:
-        raise TypeError(f"layout ops support only float16/bfloat16, got {dtype}")
-    return f"""
-#include <metal_stdlib>
-using namespace metal;
-#define ELEM_TYPE {elem_type}
-"""
-
-
-def _load_source(path: Path) -> str:
-    if not path.exists():
-        raise FileNotFoundError(f"Missing Metal kernel source: {path}")
-    return path.read_text()
 
 
 @lru_cache(maxsize=8)
@@ -104,7 +83,7 @@ def qkv_split(qkv: mx.array, H: int | None = None, D: int | None = None, *, back
         raise ValueError("backend must be one of 'reference', 'metal', 'auto'")
 
     dtype = qkv.dtype
-    source = _load_source(_QKV_SPLIT_KERNEL)
+    source = load_metal_source(_QKV_SPLIT_KERNEL)
     header = _make_header(dtype)
     kernel = _get_split_kernel(str(dtype), source, header)
     meta = mx.array([B, S, H_val, D_val, input_layout], dtype=mx.int32)
@@ -177,7 +156,7 @@ def qkv_split_rope(
         raise ValueError("backend must be one of 'reference', 'metal', 'auto'")
 
     dtype = qkv.dtype
-    source = _load_source(_QKV_SPLIT_ROPE_KERNEL)
+    source = load_metal_source(_QKV_SPLIT_ROPE_KERNEL)
     header = _make_header(dtype)
     kernel = _get_split_rope_kernel(str(dtype), source, header)
     meta = mx.array([B, S, H_val, D_val, cos_rows, position_offset, input_layout], dtype=mx.int32)

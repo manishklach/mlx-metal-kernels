@@ -15,12 +15,13 @@ from __future__ import annotations
 import math
 import os
 from functools import lru_cache
-from pathlib import Path
 from typing import Optional
 
 import mlx.core as mx
 
-_KERNEL_DIR = Path(__file__).resolve().parent.parent / "kernels"
+from .kernel_utils import KERNEL_DIR, make_metal_header, load_metal_source
+
+_KERNEL_DIR = KERNEL_DIR
 _DEFAULT_KERNEL = _KERNEL_DIR / "fast_attention.metal"
 _ROW_PARALLEL_KERNEL = _KERNEL_DIR / "fast_attention_row_parallel.metal"
 _TILED_KV_KERNEL = _KERNEL_DIR / "fast_attention_tiled_kv.metal"
@@ -38,33 +39,11 @@ _SIMDGROUP_ATTENTION_THREADS = 32
 _KV_TILE = 16
 
 
-def _make_header(dtype: mx.Dtype, *, max_head_dim: int = _MAX_HEAD_DIM, fixed_head_dim: int | None = None) -> str:
-    """Emit header code shared by MLX custom Metal kernels."""
-    if dtype == mx.bfloat16:
-        elem_type = "bfloat"
-    elif dtype == mx.float16:
-        elem_type = "half"
-    else:
-        raise TypeError(f"fast_attention supports only float16/bfloat16, got {dtype}")
-
-    fixed_dim_line = f"#define HEAD_DIM {fixed_head_dim}" if fixed_head_dim is not None else ""
-    return f"""
-#include <metal_stdlib>
-using namespace metal;
-#define ELEM_TYPE {elem_type}
-#define MAX_HEAD_DIM {max_head_dim}
-#define TG_THREADS {_THREADGROUP_ATTENTION_THREADS}
-#define KV_TILE {_KV_TILE}
-{fixed_dim_line}
-"""
-
-
-def _load_kernel_source(path: Path = _DEFAULT_KERNEL) -> str:
-    if not path.exists():
-        raise FileNotFoundError(
-            f"Missing Metal kernel source: {path}."
-        )
-    return path.read_text()
+def _make_header(dtype: mx.Dtype, *, fixed_head_dim: int | None = None) -> str:
+    kwargs = dict(MAX_HEAD_DIM=_MAX_HEAD_DIM, TG_THREADS=_THREADGROUP_ATTENTION_THREADS, KV_TILE=_KV_TILE)
+    if fixed_head_dim is not None:
+        kwargs["HEAD_DIM"] = fixed_head_dim
+    return make_metal_header(dtype, **kwargs)
 
 
 @lru_cache(maxsize=8)
@@ -144,7 +123,7 @@ def _metal_attention_common(
     V = V.astype(dtype)
     meta = mx.array([B, Sq, H, D, int(causal)], dtype=mx.int32)
     scale_arr = mx.array([float(scale)], dtype=mx.float32)
-    source = _load_kernel_source(kernel_path)
+    source = load_metal_source(kernel_path)
     header = _make_header(dtype, fixed_head_dim=fixed_head_dim)
     kernel = _get_fast_attention_kernel(
         kernel_name,

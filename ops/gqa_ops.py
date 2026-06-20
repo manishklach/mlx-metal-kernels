@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from functools import lru_cache
 import math
-from pathlib import Path
 from typing import Optional
 
 import mlx.core as mx
 
 from .attention_ops import reference_attention
 from .decode_ops import decode_attention, reference_decode_attention
+from .kernel_utils import KERNEL_DIR, make_metal_header, load_metal_source
 from .kv_cache_ops import kv_cache_update, normalize_positions, reference_kv_cache_update
 from .paged_kv_ops import (
     paged_kv_cache_update,
@@ -17,7 +17,7 @@ from .paged_kv_ops import (
 )
 from .rope_ops import apply_rope, reference_apply_rope
 
-_KERNEL_DIR = Path(__file__).resolve().parent.parent / "kernels"
+_KERNEL_DIR = KERNEL_DIR
 _GQA_ATTENTION_KERNEL = _KERNEL_DIR / "gqa_attention.metal"
 _GQA_ATTENTION_THREADGROUP_KERNEL = _KERNEL_DIR / "gqa_attention_threadgroup.metal"
 _GQA_MAX_HEAD_DIM = 128
@@ -25,25 +25,7 @@ _GQA_THREADGROUP_THREADS = 128
 
 
 def _make_header(dtype: mx.Dtype) -> str:
-    if dtype == mx.bfloat16:
-        elem_type = "bfloat"
-    elif dtype == mx.float16:
-        elem_type = "half"
-    else:
-        raise TypeError(f"gqa_attention supports only float16/bfloat16, got {dtype}")
-    return f"""
-#include <metal_stdlib>
-using namespace metal;
-#define ELEM_TYPE {elem_type}
-#define MAX_HEAD_DIM {_GQA_MAX_HEAD_DIM}
-#define TG_THREADS {_GQA_THREADGROUP_THREADS}
-"""
-
-
-def _load_kernel_source(path: Path) -> str:
-    if not path.exists():
-        raise FileNotFoundError(f"Missing Metal kernel source: {path}")
-    return path.read_text()
+    return make_metal_header(dtype, MAX_HEAD_DIM=_GQA_MAX_HEAD_DIM, TG_THREADS=_GQA_THREADGROUP_THREADS)
 
 
 @lru_cache(maxsize=8)
@@ -257,7 +239,7 @@ def gqa_attention(
     dtype = Q.dtype
     meta = mx.array([B, Sq, Sk, Hq, Hkv, D, int(causal)], dtype=mx.int32)
     scale_arr = mx.array([float(scale)], dtype=mx.float32)
-    source = _load_kernel_source(kernel_path)
+    source = load_metal_source(kernel_path)
     header = _make_header(dtype)
     kernel = _get_gqa_attention_kernel(kernel_name, str(dtype), source, header)
     return kernel(

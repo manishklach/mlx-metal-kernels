@@ -1,32 +1,13 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from pathlib import Path
 
 import mlx.core as mx
 
-_KERNEL_PATH = Path(__file__).resolve().parent.parent / "kernels" / "kv_cache_update.metal"
+from .kernel_utils import KERNEL_DIR, make_metal_header, load_metal_source
+
+_KERNEL_PATH = KERNEL_DIR / "kv_cache_update.metal"
 _THREADS = 256
-
-
-def _make_header(dtype: mx.Dtype) -> str:
-    if dtype == mx.bfloat16:
-        elem_type = "bfloat"
-    elif dtype == mx.float16:
-        elem_type = "half"
-    else:
-        raise TypeError(f"kv_cache_update supports only float16/bfloat16, got {dtype}")
-    return f"""
-#include <metal_stdlib>
-using namespace metal;
-#define ELEM_TYPE {elem_type}
-"""
-
-
-def _load_source() -> str:
-    if not _KERNEL_PATH.exists():
-        raise FileNotFoundError(f"Missing Metal kernel source: {_KERNEL_PATH}")
-    return _KERNEL_PATH.read_text()
 
 
 @lru_cache(maxsize=4)
@@ -140,7 +121,7 @@ def kv_cache_update(
         raise ValueError("backend must be one of 'reference', 'metal', 'auto'")
 
     dtype = K_cache.dtype
-    source = _load_source()
+    source = load_metal_source(_KERNEL_PATH)
     header = _make_header(dtype)
     kernel = _get_kernel(str(dtype), source, header)
     meta = mx.array([B, MAX_S, H, D], dtype=mx.int32)

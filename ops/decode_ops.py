@@ -3,14 +3,14 @@ from __future__ import annotations
 import math
 import os
 from functools import lru_cache
-from pathlib import Path
 from typing import Optional
 
 import mlx.core as mx
 
+from .kernel_utils import KERNEL_DIR, make_metal_header, load_metal_source
 from .kv_cache_ops import kv_cache_update, normalize_positions, reference_kv_cache_update
 
-_KERNEL_DIR = Path(__file__).resolve().parent.parent / "kernels"
+_KERNEL_DIR = KERNEL_DIR
 _KERNEL_PATH = _KERNEL_DIR / "decode_attention_optimized.metal"
 _KERNEL_PATH_THREADGROUP = _KERNEL_DIR / "decode_attention_threadgroup.metal"
 _SPECIALIZED_KERNELS = {
@@ -21,27 +21,10 @@ _THREADGROUP_THREADS = 128
 
 
 def _make_header(dtype: mx.Dtype, *, max_head_dim: int = 128, fixed_head_dim: int | None = None) -> str:
-    if dtype == mx.bfloat16:
-        elem_type = "bfloat"
-    elif dtype == mx.float16:
-        elem_type = "half"
-    else:
-        raise TypeError(f"decode_attention supports only float16/bfloat16, got {dtype}")
-    fixed_dim_line = f"#define HEAD_DIM {fixed_head_dim}" if fixed_head_dim is not None else ""
-    return f"""
-#include <metal_stdlib>
-using namespace metal;
-#define ELEM_TYPE {elem_type}
-#define MAX_HEAD_DIM {max_head_dim}
-#define TG_THREADS {_THREADGROUP_THREADS}
-{fixed_dim_line}
-"""
-
-
-def _load_source(path: Path) -> str:
-    if not path.exists():
-        raise FileNotFoundError(f"Missing Metal kernel source: {path}")
-    return path.read_text()
+    kwargs = dict(MAX_HEAD_DIM=max_head_dim, TG_THREADS=_THREADGROUP_THREADS)
+    if fixed_head_dim is not None:
+        kwargs["HEAD_DIM"] = fixed_head_dim
+    return make_metal_header(dtype, **kwargs)
 
 
 @lru_cache(maxsize=4)
@@ -178,7 +161,7 @@ def decode_attention(
         header = _make_header(dtype, fixed_head_dim=D)
         grid = (total_rows, 1, 1)
         threadgroup = (1, 1, 1)
-    source = _load_source(kernel_path)
+    source = load_metal_source(kernel_path)
     kernel = _get_kernel(kernel_name, str(dtype), source, header)
     meta = mx.array([B, MAX_S, H, D, int(causal)], dtype=mx.int32)
     scale_arr = mx.array([float(scale)], dtype=mx.float32)

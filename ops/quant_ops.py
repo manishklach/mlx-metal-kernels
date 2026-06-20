@@ -3,11 +3,12 @@ from __future__ import annotations
 import math
 import os
 from functools import lru_cache
-from pathlib import Path
 
 import mlx.core as mx
 
-_KERNEL_DIR = Path(__file__).resolve().parent.parent / "kernels"
+from .kernel_utils import KERNEL_DIR, make_metal_header, load_metal_source
+
+_KERNEL_DIR = KERNEL_DIR
 _DEQUANT_Q4_KERNEL = _KERNEL_DIR / "dequant_q4.metal"
 _DEQUANT_Q8_KERNEL = _KERNEL_DIR / "dequant_q8.metal"
 _GROUPWISE_DEQUANT_KERNEL = _KERNEL_DIR / "groupwise_dequant.metal"
@@ -26,25 +27,7 @@ _MATVEC_N_TILE = 4
 
 
 def _make_header(dtype: mx.Dtype) -> str:
-    if dtype == mx.bfloat16:
-        elem_type = "bfloat"
-    elif dtype == mx.float16:
-        elem_type = "half"
-    else:
-        raise TypeError(f"quant ops support only float16/bfloat16 outputs, got {dtype}")
-    return f"""
-#include <metal_stdlib>
-using namespace metal;
-#define ELEM_TYPE {elem_type}
-#define MATVEC_THREADS {_MATVEC_PARALLEL_THREADS}
-#define MATVEC_TILED_THREADS {_MATVEC_TILED_THREADS}
-"""
-
-
-def _load_source(path: Path) -> str:
-    if not path.exists():
-        raise FileNotFoundError(f"Missing Metal kernel source: {path}")
-    return path.read_text()
+    return make_metal_header(dtype, MATVEC_THREADS=_MATVEC_PARALLEL_THREADS, MATVEC_TILED_THREADS=_MATVEC_TILED_THREADS)
 
 
 @lru_cache(maxsize=16)
@@ -248,7 +231,7 @@ def dequant_q4(
     if backend_name != "metal":
         raise ValueError("backend must be one of 'reference', 'metal', 'auto'")
     dtype = out_dtype
-    source = _load_source(_DEQUANT_Q4_KERNEL)
+    source = load_metal_source(_DEQUANT_Q4_KERNEL)
     header = _make_header(dtype)
     kernel = _get_dequant_q4_kernel(str(dtype), source, header)
     groups = math.ceil(K / group_size)
@@ -309,7 +292,7 @@ def dequant_q8(
     if backend_name != "metal":
         raise ValueError("backend must be one of 'reference', 'metal', 'auto'")
     dtype = out_dtype
-    source = _load_source(_DEQUANT_Q8_KERNEL)
+    source = load_metal_source(_DEQUANT_Q8_KERNEL)
     header = _make_header(dtype)
     kernel = _get_dequant_q8_kernel(str(dtype), source, header)
     groups = math.ceil(K / group_size)
@@ -425,7 +408,7 @@ def _q4_matvec_decode_parallel(
     N, K_packed = packed_w.shape
     zeros_arr, groups, has_zero = _zeros_arr_for_matvec(N, K, scales, zeros, group_size)
     dtype = x2d.dtype
-    source = _load_source(_Q4_MATVEC_PARALLEL_KERNEL)
+    source = load_metal_source(_Q4_MATVEC_PARALLEL_KERNEL)
     header = _make_header(dtype)
     kernel = _get_q4_matvec_parallel_kernel(str(dtype), source, header)
     meta = mx.array([B, N, K, K_packed, group_size, groups, has_zero], dtype=mx.int32)
@@ -450,7 +433,7 @@ def _q8_matvec_decode_parallel(
     N = q_w.shape[0]
     zeros_arr, groups, has_zero = _zeros_arr_for_matvec(N, K, scales, zeros, group_size)
     dtype = x2d.dtype
-    source = _load_source(_Q8_MATVEC_PARALLEL_KERNEL)
+    source = load_metal_source(_Q8_MATVEC_PARALLEL_KERNEL)
     header = _make_header(dtype)
     kernel = _get_q8_matvec_parallel_kernel(str(dtype), source, header)
     meta = mx.array([B, N, K, group_size, groups, has_zero], dtype=mx.int32)
@@ -475,7 +458,7 @@ def _q4_matvec_decode_tiled(
     N, K_packed = packed_w.shape
     zeros_arr, groups, has_zero = _zeros_arr_for_matvec(N, K, scales, zeros, group_size)
     dtype = x2d.dtype
-    source = _load_source(_Q4_MATVEC_TILED_KERNEL)
+    source = load_metal_source(_Q4_MATVEC_TILED_KERNEL)
     header = _make_header(dtype)
     kernel = _get_q4_matvec_tiled_kernel(str(dtype), source, header)
     tiles_per_batch = math.ceil(N / _MATVEC_N_TILE)
@@ -501,7 +484,7 @@ def _q8_matvec_decode_tiled(
     N = q_w.shape[0]
     zeros_arr, groups, has_zero = _zeros_arr_for_matvec(N, K, scales, zeros, group_size)
     dtype = x2d.dtype
-    source = _load_source(_Q8_MATVEC_TILED_KERNEL)
+    source = load_metal_source(_Q8_MATVEC_TILED_KERNEL)
     header = _make_header(dtype)
     kernel = _get_q8_matvec_tiled_kernel(str(dtype), source, header)
     tiles_per_batch = math.ceil(N / _MATVEC_N_TILE)
@@ -562,7 +545,7 @@ def q4_matvec_decode(
     if backend_name != "metal":
         raise ValueError("backend must be one of 'reference', 'metal', 'metal_parallel', 'metal_tiled', 'auto'")
     dtype = x2d.dtype
-    source = _load_source(_Q4_MATVEC_KERNEL)
+    source = load_metal_source(_Q4_MATVEC_KERNEL)
     header = _make_header(dtype)
     kernel = _get_q4_matvec_kernel(str(dtype), source, header)
     zeros_arr, groups, has_zero = _zeros_arr_for_matvec(N, K, scales, zeros, group_size)
@@ -618,7 +601,7 @@ def q8_matvec_decode(
     if backend_name != "metal":
         raise ValueError("backend must be one of 'reference', 'metal', 'metal_parallel', 'metal_tiled', 'auto'")
     dtype = x2d.dtype
-    source = _load_source(_Q8_MATVEC_KERNEL)
+    source = load_metal_source(_Q8_MATVEC_KERNEL)
     header = _make_header(dtype)
     kernel = _get_q8_matvec_kernel(str(dtype), source, header)
     zeros_arr, groups, has_zero = _zeros_arr_for_matvec(N, K, scales, zeros, group_size)
@@ -656,7 +639,7 @@ def q4_gate_up_matvec_tiled(
         group_size=group_size,
     )
     dtype = x2d.dtype
-    source = _load_source(_Q4_GATE_UP_MATVEC_TILED_KERNEL)
+    source = load_metal_source(_Q4_GATE_UP_MATVEC_TILED_KERNEL)
     header = _make_header(dtype)
     kernel = _get_q4_gate_up_matvec_tiled_kernel(str(dtype), source, header)
     gate_zeros_arr, groups, has_gate_zero = _zeros_arr_for_matvec(out_dim, k_dim, gate_scales, gate_zeros, group_size)
@@ -710,7 +693,7 @@ def q8_gate_up_matvec_tiled(
         group_size=group_size,
     )
     dtype = x2d.dtype
-    source = _load_source(_Q8_GATE_UP_MATVEC_TILED_KERNEL)
+    source = load_metal_source(_Q8_GATE_UP_MATVEC_TILED_KERNEL)
     header = _make_header(dtype)
     kernel = _get_q8_gate_up_matvec_tiled_kernel(str(dtype), source, header)
     gate_zeros_arr, groups, has_gate_zero = _zeros_arr_for_matvec(out_dim, k_dim, gate_scales, gate_zeros, group_size)
