@@ -276,7 +276,10 @@ def reference_paged_decode_attention(
 ):
     NUM_PAGES, PAGE_SIZE, H, D, B, MAX_BLOCKS = _validate_page_tensors(K_pages, V_pages, block_table)
     if q.ndim != 4 or q.shape != (B, 1, H, D):
-        raise ValueError(f"q must have shape [B,1,H,D]={B,1,H,D}, got {q.shape}")
+        raise ValueError(
+            f"q must have shape [B,1,H,D]={B,1,H,D}, got {q.shape}. "
+            "For GQA/MQA paged decode with Hq != Hkv, use ops.gqa_ops.reference_paged_gqa_decode_attention."
+        )
     lengths_arr = _validate_positions_against_blocks(lengths if lengths is not None else MAX_BLOCKS * PAGE_SIZE, B, MAX_BLOCKS * PAGE_SIZE + 1)
     if scale is None:
         scale = 1.0 / math.sqrt(D)
@@ -323,7 +326,10 @@ def paged_decode_attention(
 ):
     NUM_PAGES, PAGE_SIZE, H, D, B, MAX_BLOCKS = _validate_page_tensors(K_pages, V_pages, block_table)
     if q.ndim != 4 or q.shape != (B, 1, H, D):
-        raise ValueError(f"q must have shape [B,1,H,D]={B,1,H,D}, got {q.shape}")
+        raise ValueError(
+            f"q must have shape [B,1,H,D]={B,1,H,D}, got {q.shape}. "
+            "For GQA/MQA paged decode with Hq != Hkv, use ops.gqa_ops.reference_paged_gqa_decode_attention."
+        )
     if D > 128:
         raise ValueError(f"paged_decode_attention currently supports D <= 128, got {D}")
     lengths_arr = _validate_positions_against_blocks(lengths if lengths is not None else MAX_BLOCKS * PAGE_SIZE, B, MAX_BLOCKS * PAGE_SIZE + 1)

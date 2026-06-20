@@ -1,7 +1,6 @@
 import mlx.core as mx
-import pytest
 
-from models.llama_config import LlamaLikeConfig, tiny_debug_config
+from models.llama_config import LlamaLikeConfig, tiny_debug_config, tiny_gqa_debug_config
 from models.model_adapter import KernelBackendConfig, LlamaLikeKernelAdapter
 
 
@@ -29,23 +28,13 @@ def test_init_cache_paged_shapes():
     states = adapter.init_cache(2, dtype=mx.float16)
     pages = 2 * ((cfg.max_position_embeddings + 15) // 16)
     assert len(states) == cfg.num_hidden_layers
-    assert states[0].K_pages.shape == (pages, 16, cfg.num_attention_heads, cfg.head_dim)
+    assert states[0].K_pages.shape == (pages, 16, cfg.num_key_value_heads, cfg.head_dim)
     assert states[0].block_table.shape[0] == 2
 
 
-def test_validate_supported_raises_for_gqa():
-    cfg = LlamaLikeConfig(
-        hidden_size=64,
-        intermediate_size=128,
-        num_attention_heads=4,
-        num_key_value_heads=2,
-        head_dim=16,
-        num_hidden_layers=2,
-        max_position_embeddings=64,
-    ).validate()
-    adapter = LlamaLikeKernelAdapter(cfg)
-    with pytest.raises(NotImplementedError, match="GQA/MQA"):
-        adapter.validate_supported()
+def test_validate_supported_allows_gqa():
+    adapter = LlamaLikeKernelAdapter(tiny_gqa_debug_config())
+    adapter.validate_supported()
 
 
 def test_choose_backend_returns_configured_or_fallback_default():
@@ -79,3 +68,10 @@ def test_run_quantized_mlp_block_shape():
     )
     mx.eval(out)
     assert out.shape == x.shape
+
+
+def test_init_cache_gqa_uses_kv_head_count():
+    cfg = tiny_gqa_debug_config()
+    adapter = LlamaLikeKernelAdapter(cfg, cache_layout="contiguous")
+    states = adapter.init_cache(1, dtype=mx.float16)
+    assert states[0].K_cache.shape == (1, cfg.max_position_embeddings, cfg.num_key_value_heads, cfg.head_dim)

@@ -20,6 +20,21 @@ def test_fused_qkv_spec_shape_for_mha():
     assert spec.expected_shape() == (3 * cfg.hidden_size, cfg.hidden_size)
 
 
+def test_fused_qkv_spec_shape_for_gqa():
+    cfg = LlamaLikeConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=16,
+        num_hidden_layers=2,
+        max_position_embeddings=64,
+    ).validate()
+    spec = fused_qkv_spec(cfg)
+    assert spec.expected_shape() == (cfg.fused_qkv_output_dim(), cfg.hidden_size)
+    assert spec.expected_shape()[0] < 3 * cfg.hidden_size
+
+
 def test_quantized_specs_include_bits_and_group_size():
     cfg = tiny_debug_config()
     spec = fused_qkv_spec(cfg, quantized=True, bits=4, group_size=32)

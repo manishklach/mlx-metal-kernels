@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-import mlx.core as mx
+try:
+    import mlx.core as mx
+except ImportError:  # pragma: no cover - exercised in environments without MLX
+    mx = None
 
 
 @dataclass
@@ -46,17 +49,35 @@ class LlamaLikeConfig:
         self.validate()
         return self.num_attention_heads // self.num_key_value_heads
 
+    def kv_groups(self) -> int:
+        return self.attention_groups()
+
+    def is_gqa(self) -> bool:
+        self.validate()
+        return self.num_attention_heads != self.num_key_value_heads
+
+    def q_heads(self) -> int:
+        self.validate()
+        return self.num_attention_heads
+
+    def kv_heads(self) -> int:
+        self.validate()
+        return self.num_key_value_heads
+
     def q_output_dim(self) -> int:
         self.validate()
-        return self.hidden_size
+        return self.num_attention_heads * self.head_dim
 
     def kv_output_dim(self) -> int:
         self.validate()
         return self.num_key_value_heads * self.head_dim
 
-    def qkv_output_dim(self) -> int:
+    def fused_qkv_output_dim(self) -> int:
         self.validate()
         return self.q_output_dim() + 2 * self.kv_output_dim()
+
+    def qkv_output_dim(self) -> int:
+        return self.fused_qkv_output_dim()
 
     def layer_shapes(self) -> dict:
         self.validate()
@@ -70,8 +91,8 @@ class LlamaLikeConfig:
             "down_proj": (self.hidden_size, self.intermediate_size),
             "input_layernorm": (self.hidden_size,),
             "post_attention_layernorm": (self.hidden_size,),
-            "fused_qkv": (self.qkv_output_dim(), self.hidden_size),
-            "cache": (self.max_position_embeddings, self.num_attention_heads, self.head_dim),
+            "fused_qkv": (self.fused_qkv_output_dim(), self.hidden_size),
+            "cache": (self.max_position_embeddings, self.num_key_value_heads, self.head_dim),
         }
 
     def to_dict(self) -> dict:
@@ -83,7 +104,11 @@ class LlamaLikeConfig:
         return cls(**data).validate()
 
 
-def build_rope_tables(config: LlamaLikeConfig, seq_len: int | None = None, dtype=mx.float32):
+def build_rope_tables(config: LlamaLikeConfig, seq_len: int | None = None, dtype=None):
+    if mx is None:
+        raise RuntimeError("MLX is required for build_rope_tables")
+    if dtype is None:
+        dtype = mx.float32
     config.validate()
     seq_total = config.max_position_embeddings if seq_len is None else seq_len
     if seq_total <= 0:
@@ -110,6 +135,20 @@ def tiny_debug_config() -> LlamaLikeConfig:
         max_position_embeddings=64,
         vocab_size=256,
         model_type="llama_like_tiny_debug",
+    ).validate()
+
+
+def tiny_gqa_debug_config() -> LlamaLikeConfig:
+    return LlamaLikeConfig(
+        hidden_size=64,
+        intermediate_size=128,
+        num_attention_heads=4,
+        num_key_value_heads=2,
+        head_dim=16,
+        num_hidden_layers=2,
+        max_position_embeddings=64,
+        vocab_size=256,
+        model_type="llama_like_tiny_gqa_debug",
     ).validate()
 
 

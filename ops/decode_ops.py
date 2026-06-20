@@ -89,7 +89,8 @@ def _validate_inputs(
     if q.shape[0] != K_cache.shape[0] or q.shape[2] != K_cache.shape[2] or q.shape[3] != K_cache.shape[3]:
         raise ValueError(
             "q and cache tensors must agree on batch, heads, and head_dim. "
-            f"Got q={q.shape}, K_cache={K_cache.shape}, V_cache={V_cache.shape}."
+            f"Got q={q.shape}, K_cache={K_cache.shape}, V_cache={V_cache.shape}. "
+            "For GQA/MQA decode with Hq != Hkv, use ops.gqa_ops.reference_gqa_decode_attention."
         )
     B, _, H, D = q.shape
     MAX_S = K_cache.shape[1]

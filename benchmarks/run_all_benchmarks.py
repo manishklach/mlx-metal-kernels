@@ -14,6 +14,7 @@ from ops.autotune_ops import select_backend
 from ops.decode_block_ops import decode_block_from_qkv, paged_decode_block_from_qkv
 from ops.decode_ops import decode_attention
 from ops.fused_ops import fused_decode_step_from_qkv, qkv_rope_cache_update
+from ops.gqa_ops import gqa_decode_block_from_qkv, reference_gqa_decode_attention, reference_paged_gqa_decode_attention
 from ops.layout_ops import qkv_split, qkv_split_rope
 from ops.mlp_block_ops import quantized_mlp_block
 from ops.norm_ops import rms_norm
@@ -299,6 +300,37 @@ def _quantized_mlp_block_cases(results, dtype, dtype_name, quick, iters, fail_fa
             _run(results, "quantized_mlp_block", "quantized_mlp_block", preset, dtype_name, shape, lambda xx=x, rr=residual, nw=norm_weight, gw=gate_w, gs=gate_scales, uw=up_w, us=up_scales, dw=down_w, ds=down_scales, bb=bits, gsz=group_size, kk=kwargs: time_fn(lambda: quantized_mlp_block(xx, rr, nw, gw, gs, uw, us, dw, ds, bits=bb, group_size=gsz, **kk), warmup=3, iters=iters), fail_fast)
 
 
+def _gqa_cases(results, dtype, dtype_name, quick, iters, fail_fast):
+    shapes = (
+        [{"B": 1, "MAX_S": 32, "PAGE_SIZE": 4, "Hq": 4, "Hkv": 2, "D": 16, "T": 4, "length": 32}]
+        if quick
+        else [{"B": 1, "MAX_S": 128, "PAGE_SIZE": 16, "Hq": 32, "Hkv": 8, "D": 128, "T": 8, "length": 128}]
+    )
+    for shape in shapes:
+        B, MAX_S, PAGE_SIZE, Hq, Hkv, D, T, length = (
+            shape["B"],
+            shape["MAX_S"],
+            shape["PAGE_SIZE"],
+            shape["Hq"],
+            shape["Hkv"],
+            shape["D"],
+            shape["T"],
+            shape["length"],
+        )
+        q = mx.random.normal((B, 1, Hq, D)).astype(dtype)
+        K_cache = mx.random.normal((B, MAX_S, Hkv, D)).astype(dtype)
+        V_cache = mx.random.normal((B, MAX_S, Hkv, D)).astype(dtype)
+        K_pages, V_pages, block_table = allocate_paged_kv_cache(B, MAX_S, Hkv, D, PAGE_SIZE, dtype)
+        K_pages = mx.random.normal(K_pages.shape).astype(dtype)
+        V_pages = mx.random.normal(V_pages.shape).astype(dtype)
+        cos = mx.random.normal((MAX_S + 4, D // 2)).astype(mx.float32)
+        sin = mx.random.normal((MAX_S + 4, D // 2)).astype(mx.float32)
+        qkv = mx.random.normal((B, 1, Hq * D + 2 * Hkv * D)).astype(dtype)
+        _run(results, "gqa", "decode_attention", "reference", dtype_name, shape, lambda qq=q, kk=K_cache, vv=V_cache, ll=length: time_fn(lambda: reference_gqa_decode_attention(qq, kk, vv, lengths=ll), warmup=3, iters=iters), fail_fast)
+        _run(results, "gqa", "paged_decode_attention", "reference", dtype_name, shape, lambda qq=q, kk=K_pages, vv=V_pages, bt=block_table, ll=length: time_fn(lambda: reference_paged_gqa_decode_attention(qq, kk, vv, bt, lengths=ll), warmup=3, iters=iters), fail_fast)
+        _run(results, "gqa", "decode_block", "reference", dtype_name, shape, lambda qq=qkv, kk=mx.zeros((B, MAX_S, Hkv, D), dtype=dtype), vv=mx.zeros((B, MAX_S, Hkv, D), dtype=dtype), cc=cos, ss=sin: time_fn(lambda: gqa_decode_block_from_qkv(qq, kk, vv, cc, ss, 0, num_attention_heads=Hq, num_key_value_heads=Hkv, head_dim=D, backend="reference"), warmup=3, iters=iters), fail_fast)
+
+
 def _threadgroup_attention_v2_cases(results, dtype, dtype_name, quick, iters, fail_fast):
     decode_shapes = [{"B": 1, "MAX_S": 64, "H": 4, "D": 64, "length": 64}] if quick else [
         {"B": 1, "MAX_S": 128, "H": 8, "D": 64, "length": 128},
@@ -405,12 +437,13 @@ def main():
     _decode_cases(results, dtype, args.dtype, quick, args.backends, iters, args.fail_fast, args.use_autotune)
     _paged_decode_cases(results, dtype, args.dtype, quick, args.backends, iters, args.fail_fast, args.use_autotune)
     _misc_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
-    _layout_cases(results, dtype, args.dtype, quick, args.fail_fast)
+    _layout_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _quant_cases(results, dtype, args.dtype, quick, args.backends, iters, args.fail_fast, args.use_autotune)
     _quant_matvec_tiled_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _decode_block_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _quantized_decode_block_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _quantized_mlp_block_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
+    _gqa_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _threadgroup_attention_v2_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _simdgroup_attention_cases(results, dtype, args.dtype, quick, iters)
     _toy_transformer_decode_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)

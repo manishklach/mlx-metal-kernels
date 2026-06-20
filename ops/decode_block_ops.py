@@ -11,6 +11,12 @@ from .fused_ops import (
     reference_rmsnorm_residual,
     rmsnorm_residual,
 )
+from .gqa_ops import (
+    gqa_decode_block_from_qkv,
+    paged_gqa_decode_block_from_qkv,
+    reference_gqa_decode_block_from_qkv,
+    reference_paged_gqa_decode_block_from_qkv,
+)
 from .kv_cache_ops import normalize_positions
 from .layout_ops import qkv_split_rope, reference_qkv_split_rope
 from .paged_kv_ops import (
@@ -122,6 +128,33 @@ def decode_block_from_qkv(
 ):
     B, max_s, _, _ = _validate_contiguous_cache(K_cache, V_cache)
     backend_name = backend.lower()
+    if H is not None and K_cache.shape[2] != H:
+        if backend_name == "reference":
+            return reference_gqa_decode_block_from_qkv(
+                qkv,
+                K_cache,
+                V_cache,
+                cos,
+                sin,
+                position,
+                num_attention_heads=H,
+                num_key_value_heads=K_cache.shape[2],
+                head_dim=D if D is not None else K_cache.shape[3],
+                scale=scale,
+            )
+        return gqa_decode_block_from_qkv(
+            qkv,
+            K_cache,
+            V_cache,
+            cos,
+            sin,
+            position,
+            num_attention_heads=H,
+            num_key_value_heads=K_cache.shape[2],
+            head_dim=D if D is not None else K_cache.shape[3],
+            scale=scale,
+            backend=backend_name,
+        )
     if backend_name == "reference":
         return reference_decode_block_from_qkv(qkv, K_cache, V_cache, cos, sin, position, H=H, D=D, scale=scale)
 
@@ -172,6 +205,35 @@ def paged_decode_block_from_qkv(
 ):
     _, page_size, _, _, batch, max_blocks = _validate_paged_cache(K_pages, V_pages, block_table)
     backend_name = backend.lower()
+    if H is not None and K_pages.shape[2] != H:
+        if backend_name == "reference":
+            return reference_paged_gqa_decode_block_from_qkv(
+                qkv,
+                K_pages,
+                V_pages,
+                block_table,
+                cos,
+                sin,
+                position,
+                num_attention_heads=H,
+                num_key_value_heads=K_pages.shape[2],
+                head_dim=D if D is not None else K_pages.shape[3],
+                scale=scale,
+            )
+        return paged_gqa_decode_block_from_qkv(
+            qkv,
+            K_pages,
+            V_pages,
+            block_table,
+            cos,
+            sin,
+            position,
+            num_attention_heads=H,
+            num_key_value_heads=K_pages.shape[2],
+            head_dim=D if D is not None else K_pages.shape[3],
+            scale=scale,
+            backend=backend_name,
+        )
     if backend_name == "reference":
         return reference_paged_decode_block_from_qkv(
             qkv, K_pages, V_pages, block_table, cos, sin, position, H=H, D=D, scale=scale

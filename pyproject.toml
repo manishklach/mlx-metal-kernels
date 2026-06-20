@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mlx-flash-attention-metal"
 version = "0.1.0"
-description = "Experimental FlashAttention-style custom Metal kernels for MLX on Apple Silicon"
+description = "Apple Silicon MLX/Metal kernel lab for LLM inference: attention, KV-cache, q4/q8 matvec, decode blocks, toy transformer layers, and autotuning."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["mlx"]

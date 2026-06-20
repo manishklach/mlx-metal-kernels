@@ -8,6 +8,7 @@ from .decode_block_ops import (
     decode_block_from_qkv,
     paged_decode_block_from_qkv,
 )
+from .gqa_ops import gqa_decode_block_from_qkv, paged_gqa_decode_block_from_qkv
 from .quant_ops import (
     q4_matvec_decode,
     q8_matvec_decode,
@@ -59,6 +60,10 @@ def infer_qkv_dims(qkv_w: mx.array, H: int | None, D: int | None, bits: int) -> 
             raise ValueError(f"qkv_w output rows imply per-projection dim {per_proj}, not divisible by D={D}")
         return per_proj // D, D
     raise ValueError("H and D must be provided when qkv dimensions cannot be inferred uniquely")
+
+
+def infer_gqa_qkv_output_dim(num_attention_heads: int, num_key_value_heads: int, head_dim: int) -> int:
+    return (num_attention_heads + 2 * num_key_value_heads) * head_dim
 
 
 def validate_quantized_weight_shapes(
@@ -249,6 +254,8 @@ def reference_quantized_decode_block(
     bits=4,
     group_size=32,
     H=None,
+    num_key_value_heads=None,
+    head_dim=None,
     D=None,
     scale=None,
     return_intermediates=False,
@@ -269,6 +276,8 @@ def reference_quantized_decode_block(
         bits=bits,
         group_size=group_size,
         H=H,
+        num_key_value_heads=num_key_value_heads,
+        head_dim=head_dim,
         D=D,
         scale=scale,
         matvec_backend="reference",
@@ -294,6 +303,8 @@ def quantized_decode_block(
     bits=4,
     group_size=32,
     H=None,
+    num_key_value_heads=None,
+    head_dim=None,
     D=None,
     scale=None,
     matvec_backend="metal_parallel",
@@ -301,7 +312,15 @@ def quantized_decode_block(
     return_intermediates=False,
 ):
     x2d, _, _ = normalize_hidden_input(x)
-    H, D = infer_qkv_dims(qkv_w, H, D, bits)
+    if head_dim is not None:
+        D = head_dim
+    kv_heads = num_key_value_heads if num_key_value_heads is not None else H
+    if kv_heads is None:
+        H, D = infer_qkv_dims(qkv_w, H, D, bits)
+        kv_heads = H
+    elif H is None or D is None:
+        raise ValueError("H and head_dim/D are required for GQA quantized decode block")
+    expected_qkv_out_dim = infer_gqa_qkv_output_dim(H, kv_heads, D)
     validate_quantized_weight_shapes(
         x2d,
         qkv_w,
@@ -309,7 +328,7 @@ def quantized_decode_block(
         qkv_zeros,
         bits=bits,
         group_size=group_size,
-        expected_out_dim=3 * H * D,
+        expected_out_dim=expected_qkv_out_dim,
         name="qkv_projection",
     )
     validate_quantized_weight_shapes(
@@ -332,18 +351,33 @@ def quantized_decode_block(
         group_size=group_size,
         backend=matvec_backend,
     )
-    attn_out, updated_K, updated_V = decode_block_from_qkv(
-        qkv,
-        K_cache,
-        V_cache,
-        cos,
-        sin,
-        position,
-        H=H,
-        D=D,
-        scale=scale,
-        backend=block_backend,
-    )
+    if kv_heads != H:
+        attn_out, updated_K, updated_V = gqa_decode_block_from_qkv(
+            qkv,
+            K_cache,
+            V_cache,
+            cos,
+            sin,
+            position,
+            num_attention_heads=H,
+            num_key_value_heads=kv_heads,
+            head_dim=D,
+            scale=scale,
+            backend=block_backend,
+        )
+    else:
+        attn_out, updated_K, updated_V = decode_block_from_qkv(
+            qkv,
+            K_cache,
+            V_cache,
+            cos,
+            sin,
+            position,
+            H=H,
+            D=D,
+            scale=scale,
+            backend=block_backend,
+        )
     projected = quantized_output_projection(
         attn_out,
         out_w,
@@ -376,6 +410,8 @@ def reference_paged_quantized_decode_block(
     bits=4,
     group_size=32,
     H=None,
+    num_key_value_heads=None,
+    head_dim=None,
     D=None,
     scale=None,
     return_intermediates=False,
@@ -397,6 +433,8 @@ def reference_paged_quantized_decode_block(
         bits=bits,
         group_size=group_size,
         H=H,
+        num_key_value_heads=num_key_value_heads,
+        head_dim=head_dim,
         D=D,
         scale=scale,
         matvec_backend="reference",
@@ -423,6 +461,8 @@ def paged_quantized_decode_block(
     bits=4,
     group_size=32,
     H=None,
+    num_key_value_heads=None,
+    head_dim=None,
     D=None,
     scale=None,
     matvec_backend="metal_parallel",
@@ -430,7 +470,15 @@ def paged_quantized_decode_block(
     return_intermediates=False,
 ):
     x2d, _, _ = normalize_hidden_input(x)
-    H, D = infer_qkv_dims(qkv_w, H, D, bits)
+    if head_dim is not None:
+        D = head_dim
+    kv_heads = num_key_value_heads if num_key_value_heads is not None else H
+    if kv_heads is None:
+        H, D = infer_qkv_dims(qkv_w, H, D, bits)
+        kv_heads = H
+    elif H is None or D is None:
+        raise ValueError("H and head_dim/D are required for GQA paged quantized decode block")
+    expected_qkv_out_dim = infer_gqa_qkv_output_dim(H, kv_heads, D)
     validate_quantized_weight_shapes(
         x2d,
         qkv_w,
@@ -438,7 +486,7 @@ def paged_quantized_decode_block(
         qkv_zeros,
         bits=bits,
         group_size=group_size,
-        expected_out_dim=3 * H * D,
+        expected_out_dim=expected_qkv_out_dim,
         name="qkv_projection",
     )
     validate_quantized_weight_shapes(
@@ -461,19 +509,35 @@ def paged_quantized_decode_block(
         group_size=group_size,
         backend=matvec_backend,
     )
-    attn_out, updated_K, updated_V = paged_decode_block_from_qkv(
-        qkv,
-        K_pages,
-        V_pages,
-        block_table,
-        cos,
-        sin,
-        position,
-        H=H,
-        D=D,
-        scale=scale,
-        backend=block_backend,
-    )
+    if kv_heads != H:
+        attn_out, updated_K, updated_V = paged_gqa_decode_block_from_qkv(
+            qkv,
+            K_pages,
+            V_pages,
+            block_table,
+            cos,
+            sin,
+            position,
+            num_attention_heads=H,
+            num_key_value_heads=kv_heads,
+            head_dim=D,
+            scale=scale,
+            backend=block_backend,
+        )
+    else:
+        attn_out, updated_K, updated_V = paged_decode_block_from_qkv(
+            qkv,
+            K_pages,
+            V_pages,
+            block_table,
+            cos,
+            sin,
+            position,
+            H=H,
+            D=D,
+            scale=scale,
+            backend=block_backend,
+        )
     projected = quantized_output_projection(
         attn_out,
         out_w,

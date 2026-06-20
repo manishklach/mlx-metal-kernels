@@ -69,7 +69,8 @@ def _validate_qkv_input(qkv: mx.array, H: int | None, D: int | None) -> tuple[in
         B, S, packed = qkv.shape
         if packed != 3 * H * D:
             raise ValueError(
-                f"packed qkv last dimension must equal 3*H*D={3 * H * D}, got {packed}"
+                f"packed qkv last dimension must equal 3*H*D={3 * H * D}, got {packed}. "
+                "For GQA/MQA fused layouts [Q;K;V] with Hq != Hkv, use ops.gqa_ops.reference_gqa_qkv_split."
             )
         return B, S, H, D, 0
     raise ValueError(f"qkv must have shape [B,S,3*H*D] or [B,S,3,H,D], got {qkv.shape}")

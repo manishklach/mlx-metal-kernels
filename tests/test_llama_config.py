@@ -1,7 +1,7 @@
 import mlx.core as mx
 import pytest
 
-from models.llama_config import LlamaLikeConfig, build_rope_tables, tiny_debug_config
+from models.llama_config import LlamaLikeConfig, build_rope_tables, tiny_debug_config, tiny_gqa_debug_config
 
 
 def test_tiny_debug_config_validates():
@@ -28,6 +28,15 @@ def test_attention_groups_and_qkv_output_dim():
     cfg = tiny_debug_config()
     assert cfg.attention_groups() == 1
     assert cfg.qkv_output_dim() == 3 * cfg.hidden_size
+
+
+def test_tiny_gqa_debug_config_shapes():
+    cfg = tiny_gqa_debug_config()
+    assert cfg.is_gqa() is True
+    assert cfg.kv_groups() == 2
+    assert cfg.q_output_dim() == 64
+    assert cfg.kv_output_dim() == 32
+    assert cfg.fused_qkv_output_dim() == 128
 
 
 def test_to_dict_from_dict_roundtrip():

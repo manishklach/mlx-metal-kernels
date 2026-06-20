@@ -83,7 +83,7 @@ def fused_qkv_spec(config: LlamaLikeConfig, *, quantized: bool = False, bits: in
     config.validate()
     return _linear(
         "fused_qkv.weight",
-        config.qkv_output_dim(),
+        config.fused_qkv_output_dim(),
         config.hidden_size,
         quantized=quantized,
         bits=bits,

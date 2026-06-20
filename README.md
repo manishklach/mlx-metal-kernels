@@ -1,395 +1,266 @@
 # MLX Metal Kernels
 
-Experimental high-performance custom Metal kernels for Apple Silicon using Apple’s MLX framework.
+Experimental MLX custom Metal kernels for Apple Silicon LLM inference.
 
-This repository explores GPU kernels for Mac-based machine learning workloads, starting with FlashAttention-style attention and expanding toward a broader library of Apple GPU inference primitives. The goal is to build correctness-first MLX custom kernels, validate them against pure MLX reference implementations, and then progressively optimize them using Apple Silicon GPU features such as threadgroup memory, SIMD-group reductions, tiled memory access, and specialized kernels for common transformer shapes.
+This repository is a correctness-first kernel lab for exploring how far Apple Silicon GPUs can be pushed through MLX custom Metal kernels. It includes attention kernels, decode attention, KV-cache and paged KV-cache operations, q4/q8 quantized matvec kernels, RMSNorm, RoPE, SwiGLU, fused decode helpers, quantized decode blocks, quantized MLP blocks, toy transformer-layer benchmarks, autotuning infrastructure, and Llama-like model integration scaffolding.
 
-The first kernel family focuses on fused attention:
+The project is not a production inference engine. It is an experimental research repo focused on building, validating, benchmarking, and iterating on Mac-native transformer inference primitives.
 
-- streaming softmax attention without materializing the full attention matrix
-- causal and non-causal attention
-- fp16 and bf16 support
-- backend dispatch for reference, baseline, and experimental optimized kernels
-- future decode and KV-cache kernels for LLM inference
+Design principles:
 
-Longer term, this repo is intended to become an experimental kernel lab for MLX on Mac, covering attention, decode, KV-cache operations, reductions, normalization, activation functions, quantization/dequantization, and other inference-oriented primitives.
+- correctness first
+- pure MLX reference path for every optimized backend
+- no performance claims without local Apple Silicon benchmark data
+- explicit experimental backend flags
+- shape-specialized kernels where useful
+- machine-specific autotuning instead of universal performance assumptions
+
+## What this repo explores
+
+The repo currently covers several layers of the local LLM inference stack:
+
+- attention and FlashAttention-style streaming softmax
+- decode attention over contiguous and paged KV-cache layouts
+- threadgroup and simdgroup Metal experiments
+- q4/q8 dequantization and quantized matvec
+- multi-output tiled quantized GEMV
+- RMSNorm, RoPE, SwiGLU, and residual helpers
+- fused and quantized decode blocks
+- quantized MLP blocks
+- toy transformer-layer decode benchmarks
+- backend autotuning for Apple Silicon machines
+- Llama-like configuration and weight-layout scaffolding
+- GQA/MQA decode support
+
+## What this project is not
+
+This repo does not currently claim to outperform MLX native kernels, CUDA FlashAttention, or production inference engines.
+
+It is not yet a full model runtime, tokenizer pipeline, checkpoint loader, or production Llama/Mistral inference engine.
+
+Performance claims should only be made from benchmark data generated on a specific Apple Silicon machine.
 
 ## Kernel Families
 
-- Attention: reference, baseline, row-parallel, and tiled-K/V fused attention backends.
-- Simdgroup Attention Experiments: explicit `simdgroup_d64` prefill backend for experimental `D=64` fp16 attention work.
-- Autotuning Infrastructure: opt-in backend registry plus local machine-specific autotune cache for backend selection experiments.
-- Real model integration scaffold: Llama-like config, weight-layout specs, and adapter helpers that bridge current kernels toward future checkpoint integration.
-- Threadgroup Attention v2: cooperative threadgroup-reduction backends for decode, paged decode, and prefill attention.
-- RMSNorm: correctness-first row-wise normalization with a pure MLX path and a Metal backend.
-- RoPE: rotary embedding application for transformer attention inputs.
-- SwiGLU: fused SiLU gate times up-projection activation.
-- KV-cache update: correctness-first cache write path for single-token K/V updates.
-- Decode Attention: single-token attention over KV cache tensors.
-- Layout and fused helpers: QKV split, split+RoPE, cache-update fusion, residual add, and RMSNorm+residual.
-- Quantization: q4/q8 dequantization plus correctness-first and parallel decode matvec kernels.
-- Multi-output quantized matvec tiling: experimental tiled q4/q8 decode matvec backends that reuse activations across small output-channel tiles.
-- Paged KV-cache: paged cache allocation, updates, and paged decode attention scaffolds.
-- Fused Decode Block: composition-first contiguous and paged decode helpers from projected QKV tokens.
-- Quantized Decode Block: composition-first q4/q8 decode blocks built from quantized matvec plus decode-attention helpers.
-- Quantized MLP Block: composition-first q4/q8 feed-forward block built from RMSNorm, quantized projections, SwiGLU, and residual add.
-- Toy transformer decode benchmark: end-to-end single-layer decode composition built from existing RMSNorm, quantized attention, SwiGLU, and residual primitives.
-- Shape-specialized kernels: experimental D=64 and D=128 attention/decode backends.
-- Future: paged KV, quantized matvec, and tiled attention kernels.
+### Attention
+
+- Reference MLX attention
+- Baseline custom Metal streaming attention
+- Row-parallel attention
+- Tiled K/V attention
+- Threadgroup attention v2
+- Shape-specialized D=64/D=128 attention
+- Experimental `simdgroup_d64` attention
+
+### Decode and KV-cache
+
+- Contiguous KV-cache update
+- Decode attention
+- Paged KV-cache allocation and update
+- Paged decode attention
+- Decode loop helpers
+- Fused decode blocks from QKV
+- GQA/MQA decode-block composition
+
+### Transformer primitives
+
+- RMSNorm
+- RoPE
+- SwiGLU
+- Residual add
+- RMSNorm + residual
+- QKV split
+- QKV split + RoPE
+- QKV + RoPE + cache update
+
+### Quantization
+
+- q4/q8 dequantization
+- q4/q8 decode matvec
+- parallel q4/q8 matvec
+- multi-output tiled q4/q8 matvec
+- quantized QKV projection
+- quantized output projection
+- quantized decode block
+- quantized MLP block
+
+### Model-level scaffolding
+
+- Toy transformer-layer decode benchmark
+- Llama-like config
+- Weight-layout mapping helpers
+- Model-adapter scaffold
+- GQA/MQA utilities
+
+### Benchmarking and autotuning
+
+- Unified benchmark runner
+- Local benchmark report generator
+- Chip-specific backend registry
+- Local autotune cache
 
 ## Project Goal
 
-MLX makes Apple Silicon a serious local machine learning platform, but many high-performance model operations still benefit from custom fused kernels. This project investigates how far MLX custom Metal kernels can be pushed for transformer inference workloads on Mac.
+MLX makes Apple Silicon a serious local machine learning platform, but high-performance transformer inference still benefits from custom fused kernels, layout-aware memory movement, quantized matvec, and backend choices tuned to the local machine.
 
-The initial focus is attention. Standard attention materializes or conceptually computes the full `QK^T` score matrix before applying softmax and multiplying by `V`. FlashAttention-style kernels avoid materializing the full attention matrix by streaming over keys and values while maintaining online softmax statistics. This reduces memory traffic and creates a better foundation for long-context inference.
+This project investigates how to build and validate those primitives directly in MLX using custom Metal kernels.
 
-This repository starts with a correctness-first implementation and then adds progressively more optimized backends:
+The core workflow is:
 
-1. Pure MLX reference implementation
-2. Baseline custom Metal streaming attention kernel
-3. Row-parallel attention kernel
-4. Tiled K/V attention kernel
-5. Simdgroup attention experiments
-6. Specialized D=64 and D=128 kernels
-7. Decode attention for single-token inference
-8. KV-cache and paged-KV kernels
-9. Quantized decode block
-10. Additional MLX custom kernels for transformer inference
+1. implement a pure MLX reference path
+2. add a correctness-first Metal backend
+3. test the Metal backend against reference
+4. add experimental optimized backends
+5. benchmark locally on Apple Silicon
+6. use explicit backend flags or autotuning to select kernels
 
-The design philosophy is simple:
-
-- correctness first
-- every optimized backend must match the reference implementation
-- no performance claims without benchmarks
-- keep experimental kernels behind explicit backend flags
-- make Apple Silicon GPU behavior visible and measurable
-
-The goal is to compute:
-
-```text
-O = softmax(Q K^T * scale) V
-```
-
-without materializing the full `[S, S]` attention matrix.
+The project is intentionally incremental: attention, decode, KV-cache, quantized matvec, MLP, and model-level scaffolding are developed as separate testable pieces before attempting larger fused runtime paths.
 
 ## Current status
 
-`v0.1` keeps a stable correctness-first baseline, adds a reference backend,
-and includes experimental optimized backends:
+This repo is an experimental kernel research project, not a production inference runtime.
 
-- MLX Python wrapper around custom Metal kernels
-- BSHD layout: `[batch, sequence, heads, head_dim]`
-- fp16 and bf16 input/output
-- causal and non-causal attention
-- configurable scale
-- `head_dim <= 128`
-- reference MLX implementation for correctness tests
-- benchmark CLI with backend selection and matrix mode
+Current capabilities include:
 
-Backends:
+- MLX custom Metal kernels with pure MLX reference implementations
+- attention, decode attention, and paged decode attention
+- KV-cache and paged KV-cache update helpers
+- q4/q8 dequantization and quantized matvec kernels
+- parallel and tiled q4/q8 decode matvec backends
+- RMSNorm, RoPE, SwiGLU, residual, and QKV layout helpers
+- fused and quantized decode-block composition
+- quantized MLP-block composition
+- toy transformer-layer decode benchmark
+- Llama-like config, weight layout, and model-adapter scaffolding
+- GQA/MQA reference and composed decode support
+- opt-in backend autotuning for local Apple Silicon machines
 
-- `reference`: pure MLX materialized reference implementation used for
-  correctness validation.
-- `baseline`: stable correctness-first kernel. One Metal thread computes one
-  full attention row and streams over K/V in three passes.
-- `row_parallel`: experimental kernel. One Metal threadgroup cooperates on one
-  attention row, parallelizes row max and denominator reductions, and splits
-  output accumulation across `D`.
-- `tiled_kv`: experimental kernel. One threadgroup stages K/V tiles in
-  threadgroup memory and streams over KV blocks with online softmax state.
-- `simdgroup_d64`: experimental prefill kernel for `D=64` and `mx.float16`.
-  It is explicit-only and intended as a narrow simdgroup experiment.
-- `auto`: currently aliases to `baseline` until the experimental path is
-  consistently validated on Apple Silicon.
-
-Specialized decode and attention backends are opt-in. `auto` stays conservative by default; set `MLX_METAL_USE_SPECIALIZED=1` to route supported `D=64` and `D=128` shapes to the specialized kernels during local experiments.
-Threadgroup attention is also opt-in. Set `MLX_METAL_USE_THREADGROUP_ATTENTION=1` to let `auto` dispatch to the experimental threadgroup attention backends.
-
-This is **not yet** a full heavily optimized tiled/threadgroup-memory or
-simdgroup-matrix FlashAttention implementation. The baseline path remains the
-default stable backend, while row-parallel, tiled-K/V, threadgroup, and
-`simdgroup_d64` should all be treated as explicit experimental paths until
-they pass repeated Apple Silicon validation and benchmark coverage.
+Stable defaults remain conservative. Experimental backends such as threadgroup, tiled, specialized, and simdgroup kernels are explicit-only unless enabled through documented flags or autotuning.
 
 ## Install
 
 ```bash
 pip install mlx pytest
-```
-
-Use editable mode from the repo root:
-
-```bash
 pip install -e .
 pytest tests -q
-python examples/run_basic.py
-python benchmarks/bench_attention.py --backend all --S 128 --H 8 --D 64 --dtype float16
-python benchmarks/bench_rms_norm.py --B 2 --S 8 --D 1024 --dtype float16 --backend metal
-python benchmarks/bench_rope.py --B 2 --S 16 --H 8 --D 128 --dtype float16 --backend metal
-python benchmarks/bench_swiglu.py --B 2 --S 16 --D 256 --dtype float16 --backend metal
-python benchmarks/bench_kv_cache_update.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend metal
-python benchmarks/bench_decode_attention.py --B 2 --MAX_S 32 --H 8 --D 64 --length 32 --dtype float16 --backend metal
-python benchmarks/bench_decode_loop.py --B 2 --MAX_S 64 --T 16 --H 8 --D 64 --dtype float16 --backend metal
-python benchmarks/bench_qkv_split.py --B 2 --S 16 --H 8 --D 64 --dtype float16 --backend all
-python benchmarks/bench_fused_qkv_rope_cache.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend all
-python benchmarks/bench_residual_norm.py --B 2 --S 16 --D 1024 --dtype float16 --backend all
-python benchmarks/bench_dequant.py --bits 4 --M 4096 --K 4096 --dtype float16 --backend all
-python benchmarks/bench_quant_matvec_decode.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
-python benchmarks/bench_paged_kv_cache_update.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --dtype float16 --backend all
-python benchmarks/bench_paged_decode_attention.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
-python benchmarks/bench_paged_decode_loop.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --T 32 --H 8 --D 64 --dtype float16 --backend all
-python benchmarks/bench_decode_block.py --B 2 --MAX_S 128 --T 32 --H 8 --D 64 --dtype float16 --backend all
-python benchmarks/bench_paged_decode_block.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --T 32 --H 8 --D 64 --dtype float16 --backend all
-python benchmarks/bench_specialized_decode_attention.py --B 2 --MAX_S 128 --H 8 --D 64 --length 128 --dtype float16 --backend all
-python benchmarks/bench_specialized_paged_decode_attention.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
-python benchmarks/bench_specialized_fast_attention.py --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
-python benchmarks/bench_quant_matvec_parallel.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
-python benchmarks/bench_quant_matvec_parallel.py --bits 8 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
-python benchmarks/bench_quant_matvec_tiled.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
-python benchmarks/bench_quant_matvec_tiled.py --bits 8 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
-python benchmarks/bench_quantized_decode_block.py --bits 4 --cache contiguous --B 1 --K 4096 --H 32 --D 128 --MAX_S 128 --T 16 --dtype float16 --backend-preset parallel
-python benchmarks/bench_quantized_decode_block.py --bits 4 --cache paged --B 1 --K 4096 --H 32 --D 128 --MAX_S 128 --PAGE_SIZE 16 --T 16 --dtype float16 --backend-preset parallel
-python benchmarks/bench_quantized_mlp_block.py --bits 4 --B 1 --S 1 --hidden-size 4096 --intermediate-size 11008 --dtype float16 --backend-preset all
-python benchmarks/bench_threadgroup_attention.py --mode decode --B 1 --MAX_S 128 --H 8 --D 64 --length 128 --dtype float16 --backend all
-python benchmarks/bench_threadgroup_attention.py --mode paged_decode --B 1 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
-python benchmarks/bench_threadgroup_attention.py --mode prefill --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
-python benchmarks/bench_simdgroup_attention.py --mode prefill --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
-python benchmarks/autotune.py --op all --quick --dtype float16 --write-cache
-python benchmarks/bench_toy_transformer_decode.py --cache contiguous --bits 4 --B 1 --K 512 --H 8 --D 64 --INTERMEDIATE 1024 --MAX_S 64 --T 8 --dtype float16 --backend-preset parallel
-python benchmarks/bench_toy_transformer_decode.py --cache paged --bits 4 --B 1 --K 512 --H 8 --D 64 --INTERMEDIATE 1024 --MAX_S 64 --PAGE_SIZE 16 --T 8 --dtype float16 --backend-preset parallel
-python examples/inspect_model_shapes.py
-python examples/llama_like_decode_demo.py
 ```
 
-## Benchmark
+Run a basic example:
 
 ```bash
-python benchmarks/bench_attention.py --backend all --S 128 --H 8 --D 64 --dtype float16
-python benchmarks/bench_attention.py --backend baseline --S 64 --H 4 --D 32 --dtype float16
-python benchmarks/bench_attention.py --backend baseline --S 128 --H 8 --D 64 --dtype float16
-python benchmarks/bench_attention.py --backend row_parallel --S 128 --H 8 --D 64 --dtype float16
-python benchmarks/bench_attention.py --backend tiled_kv --S 128 --H 8 --D 64 --dtype float16
-python benchmarks/bench_attention.py --backend baseline --matrix --H 8 --dtype float16
-python benchmarks/bench_attention.py --backend row_parallel --matrix --H 8 --dtype float16
-python benchmarks/bench_attention.py --backend tiled_kv --matrix --H 8 --dtype float16
-python benchmarks/bench_attention.py --backend reference --matrix --H 8 --dtype float16
-python benchmarks/bench_simdgroup_attention.py --mode prefill --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
-python benchmarks/autotune.py --op all --quick --dtype float16 --write-cache
-python benchmarks/bench_kv_cache_update.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend metal
-python benchmarks/bench_decode_attention.py --B 2 --MAX_S 32 --H 8 --D 64 --length 32 --dtype float16 --backend all
-python benchmarks/bench_decode_loop.py --B 2 --MAX_S 64 --T 16 --H 8 --D 64 --dtype float16 --backend metal
-python benchmarks/bench_qkv_split.py --B 2 --S 16 --H 8 --D 64 --dtype float16 --layout packed --backend all
-python benchmarks/bench_fused_qkv_rope_cache.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend all
-python benchmarks/bench_residual_norm.py --B 2 --S 16 --D 1024 --dtype float16 --backend all
-python benchmarks/bench_decode_block.py --B 2 --MAX_S 128 --T 32 --H 8 --D 64 --dtype float16 --backend all
-python benchmarks/bench_paged_decode_block.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --T 32 --H 8 --D 64 --dtype float16 --backend all
-python benchmarks/bench_specialized_decode_attention.py --B 2 --MAX_S 128 --H 8 --D 64 --length 128 --dtype float16 --backend all
-python benchmarks/bench_specialized_paged_decode_attention.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
-python benchmarks/bench_specialized_fast_attention.py --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
-python benchmarks/bench_quant_matvec_parallel.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
-python benchmarks/bench_quant_matvec_parallel.py --bits 8 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
-python benchmarks/bench_quantized_decode_block.py --bits 4 --cache contiguous --B 1 --K 4096 --H 32 --D 128 --MAX_S 128 --T 16 --dtype float16 --backend-preset parallel
-python benchmarks/bench_quantized_decode_block.py --bits 4 --cache paged --B 1 --K 4096 --H 32 --D 128 --MAX_S 128 --PAGE_SIZE 16 --T 16 --dtype float16 --backend-preset parallel
-python benchmarks/bench_quantized_mlp_block.py --bits 4 --B 1 --S 1 --hidden-size 4096 --intermediate-size 11008 --dtype float16 --backend-preset all
+python examples/run_basic.py
 ```
 
-## API
+Run the quick benchmark suite:
+
+```bash
+python benchmarks/run_all_benchmarks.py --quick
+```
+
+Run autotuning:
+
+```bash
+python benchmarks/autotune.py --op all --quick --dtype float16 --write-cache
+python benchmarks/run_all_benchmarks.py --quick --use-autotune
+```
+
+## Quick start
 
 ```python
 import mlx.core as mx
-from ops.activation_ops import swiglu
 from ops.attention_ops import fast_attention
-from ops.decode_ops import decode_attention, decode_step
-from ops.decode_block_ops import decode_block_from_qkv, paged_decode_block_from_qkv
-from ops.fused_ops import fused_decode_step_from_qkv, qkv_rope_cache_update, residual_add, rmsnorm_residual
-from ops.kv_cache_ops import kv_cache_update
-from ops.layout_ops import qkv_split, qkv_split_rope
-from ops.mlp_block_ops import quantized_mlp_block
-from ops.norm_ops import rms_norm
-from ops.paged_kv_ops import allocate_paged_kv_cache, paged_decode_attention, paged_decode_step, paged_kv_cache_update
-from ops.quant_ops import dequant_q4, dequant_q8, pack_q4, q4_matvec_decode, q8_matvec_decode
-from ops.quantized_decode_block_ops import quantized_decode_block
-from ops.rope_ops import apply_rope
-from ops.toy_transformer_ops import toy_transformer_decode_layer
 
 Q = mx.random.normal((1, 128, 8, 64)).astype(mx.float16)
 K = mx.random.normal((1, 128, 8, 64)).astype(mx.float16)
 V = mx.random.normal((1, 128, 8, 64)).astype(mx.float16)
 
 O = fast_attention(Q, K, V, causal=True, backend="auto")
-O_exp = fast_attention(Q, K, V, causal=True, backend="row_parallel")
-O_tiled = fast_attention(Q, K, V, causal=True, backend="tiled_kv")
-O_threadgroup = fast_attention(Q, K, V, causal=False, backend="threadgroup")
-O_simd = fast_attention(Q, K, V, causal=False, backend="simdgroup_d64")
-O_d64 = fast_attention(Q, K, V, causal=False, backend="baseline_d64")
+```
 
-x = mx.random.normal((2, 8, 1024)).astype(mx.float16)
-weight = mx.ones((1024,), dtype=mx.float16)
-y_norm = rms_norm(x, weight, backend="auto")
+```python
+import mlx.core as mx
+from ops.decode_ops import decode_attention
 
-rope_inp = mx.random.normal((1, 16, 8, 128)).astype(mx.float16)
-cos = mx.random.normal((32, 64)).astype(mx.float32)
-sin = mx.random.normal((32, 64)).astype(mx.float32)
-y_rope = apply_rope(rope_inp, cos, sin, backend="auto")
-
-gate = mx.random.normal((2, 16, 256)).astype(mx.float16)
-up = mx.random.normal((2, 16, 256)).astype(mx.float16)
-y_swiglu = swiglu(gate, up, backend="auto")
-
-MAX_S = 16
-T = 8
-K_cache = mx.zeros((1, MAX_S, 8, 64), dtype=mx.float16)
-V_cache = mx.zeros((1, MAX_S, 8, 64), dtype=mx.float16)
 q = mx.random.normal((1, 1, 8, 64)).astype(mx.float16)
-k_new = mx.random.normal((1, 1, 8, 64)).astype(mx.float16)
-v_new = mx.random.normal((1, 1, 8, 64)).astype(mx.float16)
+K_cache = mx.random.normal((1, 128, 8, 64)).astype(mx.float16)
+V_cache = mx.random.normal((1, 128, 8, 64)).astype(mx.float16)
 
-K_cache, V_cache = kv_cache_update(K_cache, V_cache, k_new, v_new, 0)
-O_decode = decode_attention(q, K_cache, V_cache, lengths=1, backend="auto")
-O_decode_threadgroup = decode_attention(q, K_cache, V_cache, lengths=1, backend="metal_threadgroup")
-O_decode_d64 = decode_attention(q, K_cache, V_cache, lengths=1, backend="metal_d64")
-O_step, K_cache, V_cache = decode_step(q, k_new, v_new, K_cache, V_cache, 1, backend="auto")
+y = decode_attention(q, K_cache, V_cache, lengths=128, backend="metal")
+```
 
-packed_qkv = mx.random.normal((1, 1, 3 * 8 * 64)).astype(mx.float16)
-q_tok, k_tok, v_tok = qkv_split(packed_qkv, H=8, D=64, backend="auto")
-q_rope, k_rope, v_tok = qkv_split_rope(packed_qkv, cos, sin, H=8, D=64, position_offset=0, backend="auto")
-q_only, K_cache, V_cache = qkv_rope_cache_update(packed_qkv, K_cache, V_cache, cos, sin, 2, H=8, D=64, backend="auto")
-y_add = residual_add(x[:, :1, :64], x[:, :1, :64], backend="auto")
-y_norm_res, z_res = rmsnorm_residual(x, x, weight, return_residual=True, backend="auto")
-out_fused, K_cache, V_cache = fused_decode_step_from_qkv(packed_qkv, K_cache, V_cache, cos, sin, 3, H=8, D=64, backend="auto")
+```python
+import mlx.core as mx
+from ops.quant_ops import pack_q4, q4_matvec_decode
 
+x = mx.random.normal((1, 64)).astype(mx.float16)
 q4_vals = (mx.random.uniform((32, 64)) * 16).astype(mx.uint8)
 packed_w = pack_q4(q4_vals)
 scales = mx.ones((32, 2), dtype=mx.float32)
-W_deq = dequant_q4(packed_w, scales, group_size=32, backend="auto")
-y_q4 = q4_matvec_decode(mx.random.normal((1, 64)).astype(mx.float16), packed_w, scales, group_size=32, backend="auto")
-y_q4_parallel = q4_matvec_decode(
-    mx.random.normal((1, 64)).astype(mx.float16), packed_w, scales, zeros=None, group_size=32, backend="metal_parallel"
-)
-y_q4_tiled = q4_matvec_decode(
-    mx.random.normal((1, 64)).astype(mx.float16), packed_w, scales, zeros=None, group_size=32, backend="metal_tiled"
-)
 
-q8_vals = (mx.random.uniform((32, 64)) * 255).astype(mx.uint8)
-y_q8 = q8_matvec_decode(mx.random.normal((1, 64)).astype(mx.float16), q8_vals, scales, group_size=32, backend="auto")
-y_q8_parallel = q8_matvec_decode(
-    mx.random.normal((1, 64)).astype(mx.float16), q8_vals, scales, zeros=None, group_size=32, backend="metal_parallel"
-)
-y_q8_tiled = q8_matvec_decode(
-    mx.random.normal((1, 64)).astype(mx.float16), q8_vals, scales, zeros=None, group_size=32, backend="metal_tiled"
-)
-
-PAGE_SIZE = 4
-K_pages, V_pages, block_table = allocate_paged_kv_cache(1, MAX_S, 8, 64, PAGE_SIZE, dtype=mx.float16)
-K_pages, V_pages = paged_kv_cache_update(K_pages, V_pages, k_new, v_new, block_table, 0)
-out_paged = paged_decode_attention(q, K_pages, V_pages, block_table, lengths=1, backend="auto")
-out_paged_threadgroup = paged_decode_attention(q, K_pages, V_pages, block_table, lengths=1, backend="metal_threadgroup")
-out_paged_d64 = paged_decode_attention(q, K_pages, V_pages, block_table, lengths=1, backend="metal_d64")
-out_step, K_pages, V_pages = paged_decode_step(q, k_new, v_new, K_pages, V_pages, block_table, 1, backend="auto")
-out_block, K_cache, V_cache = decode_block_from_qkv(packed_qkv, K_cache, V_cache, cos, sin, 4, H=8, D=64, backend="auto")
-out_paged_block, K_pages, V_pages = paged_decode_block_from_qkv(
-    packed_qkv, K_pages, V_pages, block_table, cos, sin, 2, H=8, D=64, backend="auto"
-)
-y_qblock, K_cache, V_cache = quantized_decode_block(
-    mx.random.normal((1, 1, 512)).astype(mx.float16),
-    pack_q4((mx.random.uniform((3 * 8 * 64, 512)) * 16).astype(mx.uint8)),
-    mx.ones((3 * 8 * 64, 16), dtype=mx.float32),
-    pack_q4((mx.random.uniform((512, 8 * 64)) * 16).astype(mx.uint8)),
-    mx.ones((512, 16), dtype=mx.float32),
-    K_cache,
-    V_cache,
-    cos,
-    sin,
-    5,
-    bits=4,
-    H=8,
-    D=64,
-    matvec_backend="metal_parallel",
-    block_backend="metal",
-)
-y_mlp = quantized_mlp_block(
-    mx.random.normal((1, 1, 512)).astype(mx.float16),
-    mx.random.normal((1, 1, 512)).astype(mx.float16),
-    mx.ones((512,), dtype=mx.float16),
-    pack_q4((mx.random.uniform((1024, 512)) * 16).astype(mx.uint8)),
-    mx.ones((1024, 16), dtype=mx.float32),
-    pack_q4((mx.random.uniform((1024, 512)) * 16).astype(mx.uint8)),
-    mx.ones((1024, 16), dtype=mx.float32),
-    pack_q4((mx.random.uniform((512, 1024)) * 16).astype(mx.uint8)),
-    mx.ones((512, 32), dtype=mx.float32),
-    bits=4,
-    matvec_backend="metal_tiled",
-)
-y_layer, K_cache, V_cache = toy_transformer_decode_layer(
-    mx.random.normal((1, 1, 512)).astype(mx.float16),
-    mx.ones((512,), dtype=mx.float16),
-    mx.ones((512,), dtype=mx.float16),
-    pack_q4((mx.random.uniform((3 * 8 * 64, 512)) * 16).astype(mx.uint8)),
-    mx.ones((3 * 8 * 64, 16), dtype=mx.float32),
-    pack_q4((mx.random.uniform((512, 8 * 64)) * 16).astype(mx.uint8)),
-    mx.ones((512, 16), dtype=mx.float32),
-    pack_q4((mx.random.uniform((1024, 512)) * 16).astype(mx.uint8)),
-    mx.ones((1024, 16), dtype=mx.float32),
-    pack_q4((mx.random.uniform((1024, 512)) * 16).astype(mx.uint8)),
-    mx.ones((1024, 16), dtype=mx.float32),
-    pack_q4((mx.random.uniform((512, 1024)) * 16).astype(mx.uint8)),
-    mx.ones((512, 32), dtype=mx.float32),
-    K_cache,
-    V_cache,
-    cos,
-    sin,
-    6,
-    bits=4,
-    H=8,
-    D=64,
-    matvec_backend="metal_parallel",
-    block_backend="metal",
-)
+y = q4_matvec_decode(x, packed_w, scales, group_size=32, backend="metal_tiled")
 ```
 
-## Transformer Primitive Benchmarks
+## Benchmark examples
+
+### Attention
 
 ```bash
-python benchmarks/bench_rms_norm.py --B 2 --S 8 --D 1024 --dtype float16 --backend metal
-python benchmarks/bench_rope.py --B 2 --S 16 --H 8 --D 128 --dtype float16 --backend metal
-python benchmarks/bench_swiglu.py --B 2 --S 16 --D 256 --dtype float16 --backend metal
-python benchmarks/bench_kv_cache_update.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend metal
-python benchmarks/bench_decode_attention.py --B 2 --MAX_S 32 --H 8 --D 64 --length 32 --dtype float16 --backend metal
-python benchmarks/bench_decode_loop.py --B 2 --MAX_S 64 --T 16 --H 8 --D 64 --dtype float16 --backend metal
-python benchmarks/bench_qkv_split.py --B 2 --S 16 --H 8 --D 64 --dtype float16 --backend all
-python benchmarks/bench_fused_qkv_rope_cache.py --B 2 --MAX_S 128 --H 8 --D 64 --dtype float16 --backend all
-python benchmarks/bench_residual_norm.py --B 2 --S 16 --D 1024 --dtype float16 --backend all
-python benchmarks/bench_quantized_decode_block.py --bits 4 --cache contiguous --B 1 --K 4096 --H 32 --D 128 --MAX_S 128 --T 16 --dtype float16 --backend-preset parallel
-python benchmarks/bench_quantized_decode_block.py --bits 4 --cache paged --B 1 --K 4096 --H 32 --D 128 --MAX_S 128 --PAGE_SIZE 16 --T 16 --dtype float16 --backend-preset parallel
-python benchmarks/bench_threadgroup_attention.py --mode decode --B 1 --MAX_S 128 --H 8 --D 64 --length 128 --dtype float16 --backend all
-python benchmarks/bench_threadgroup_attention.py --mode paged_decode --B 1 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
+python benchmarks/bench_attention.py --backend all --S 128 --H 8 --D 64 --dtype float16
 python benchmarks/bench_threadgroup_attention.py --mode prefill --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
-python benchmarks/bench_dequant.py --bits 4 --M 4096 --K 4096 --dtype float16 --backend all
-python benchmarks/bench_quant_matvec_decode.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
-python benchmarks/bench_quant_matvec_parallel.py --bits 4 --B 1 --K 4096 --N 4096 --group-size 32 --dtype float16 --backend all
-python benchmarks/bench_quant_matvec_parallel.py --bits 8 --B 1 --K 4096 --N 4096 --group-size 32 --dtype float16 --backend all
-python benchmarks/bench_quant_matvec_tiled.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
-python benchmarks/bench_quant_matvec_tiled.py --bits 8 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
-python benchmarks/bench_toy_transformer_decode.py --cache contiguous --bits 4 --B 1 --K 512 --H 8 --D 64 --INTERMEDIATE 1024 --MAX_S 64 --T 8 --dtype float16 --backend-preset parallel
-python benchmarks/bench_toy_transformer_decode.py --cache paged --bits 4 --B 1 --K 512 --H 8 --D 64 --INTERMEDIATE 1024 --MAX_S 64 --PAGE_SIZE 16 --T 8 --dtype float16 --backend-preset parallel
-python benchmarks/bench_paged_kv_cache_update.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/bench_simdgroup_attention.py --mode prefill --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
+```
+
+### Decode and KV-cache
+
+```bash
+python benchmarks/bench_decode_attention.py --B 2 --MAX_S 32 --H 8 --D 64 --length 32 --dtype float16 --backend all
 python benchmarks/bench_paged_decode_attention.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
-python benchmarks/bench_paged_decode_loop.py --B 2 --MAX_S 128 --PAGE_SIZE 16 --T 32 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/bench_decode_block.py --B 2 --MAX_S 128 --T 32 --H 8 --D 64 --dtype float16 --backend all
+python benchmarks/bench_gqa_decode_attention.py --B 1 --MAX_S 128 --Hq 32 --Hkv 8 --D 128 --dtype float16 --cache contiguous --backend all
+python benchmarks/bench_gqa_decode_block.py --B 1 --MAX_S 128 --Hq 32 --Hkv 8 --D 128 --T 16 --dtype float16 --cache contiguous
+```
+
+### Quantization
+
+```bash
+python benchmarks/bench_dequant.py --bits 4 --M 4096 --K 4096 --dtype float16 --backend all
+python benchmarks/bench_quant_matvec_parallel.py --bits 4 --B 1 --K 4096 --N 4096 --group-size 32 --dtype float16 --backend all
+python benchmarks/bench_quant_matvec_tiled.py --bits 4 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
+```
+
+### Transformer blocks
+
+```bash
+python benchmarks/bench_quantized_decode_block.py --bits 4 --cache contiguous --B 1 --K 4096 --H 32 --D 128 --MAX_S 128 --T 16 --dtype float16 --backend-preset parallel
+python benchmarks/bench_quantized_mlp_block.py --bits 4 --B 1 --S 1 --hidden-size 4096 --intermediate-size 11008 --dtype float16 --backend-preset all
+python benchmarks/bench_toy_transformer_decode.py --cache contiguous --bits 4 --B 1 --K 512 --H 8 --D 64 --INTERMEDIATE 1024 --MAX_S 64 --T 8 --dtype float16 --backend-preset parallel
+```
+
+### Full benchmark suite
+
+```bash
+python benchmarks/run_all_benchmarks.py --quick
+python benchmarks/run_all_benchmarks.py --quick --use-autotune
+python benchmarks/run_all_benchmarks.py --full --output benchmarks/results/local_results.json --csv benchmarks/results/local_results.csv
+python scripts/save_benchmark_report.py benchmarks/results/local_results.json --output docs/performance_report_local.md
 ```
 
 ## Benchmark Suite
+
+The repo includes a unified benchmark runner, machine metadata capture, CSV/JSON output, and a report-generation path for local Apple Silicon measurements.
+
+Useful entry points:
 
 ```bash
 python benchmarks/run_all_benchmarks.py --quick
 python benchmarks/run_all_benchmarks.py --quick --use-autotune
 python benchmarks/run_all_benchmarks.py --full --output benchmarks/results/local_results.json --csv benchmarks/results/local_results.csv
 python benchmarks/autotune.py --op all --quick --dtype float16 --write-cache
-python scripts/save_benchmark_report.py benchmarks/results/local_results.json --output docs/performance_report_local.md
 ```
 
 ## Autotuning
 
-Autotuning is opt-in. The repo now includes a backend registry and a local JSON cache for machine-specific backend choices.
+Autotuning is opt-in. The repo includes a backend registry and a local JSON cache for machine-specific backend choices.
 
 Example:
 
@@ -411,76 +282,202 @@ python benchmarks/autotune.py --op all --quick --dtype float16 --write-cache
 python benchmarks/run_all_benchmarks.py --quick --use-autotune
 ```
 
-Autotune results are local to a machine and should not be treated as universal performance claims.
+Autotune results are local to a specific machine and should not be treated as universal performance claims.
 
-## Real Model Integration Scaffold
+## Llama-like integration scaffold
 
-The repo now includes a shape/config/adaptor scaffold for Llama-like models:
+The repo includes lightweight model-integration scaffolding for Llama-like transformer layouts.
 
-- `models/llama_config.py`
-- `models/weight_layouts.py`
-- `models/model_adapter.py`
+Current scope:
 
-Examples:
+- Llama-like config objects
+- weight-shape mapping helpers
+- fused QKV layout conventions
+- model-adapter scaffold
+- toy and random decode examples
+- dependency-light checkpoint layout inspection and mapping helpers
+
+Out of scope for now:
+
+- production checkpoint loading
+- tokenizer integration
+- sampling loop
+- full model serving runtime
+
+Example commands:
 
 ```bash
 python examples/inspect_model_shapes.py
 python examples/llama_like_decode_demo.py
 ```
 
-This repo does not yet provide production Llama inference or full checkpoint loading. The current scope is configuration, weight-layout mapping, cache setup, and decode-layer integration scaffolding on top of the existing kernel building blocks.
+## Checkpoint layout scaffold
 
-## Quantized MLP Block
+The repo includes a dependency-light checkpoint layout scaffold for inspecting and validating Llama-like tensor names and shapes.
 
-`ops/mlp_block_ops.py` adds a shared q4/q8 feed-forward block for Llama-like decode layers. It composes residual add, RMSNorm, quantized gate and up projections, SwiGLU, a quantized down projection, and the final residual update without introducing a monolithic new default kernel.
+Current scope:
+
+- JSON checkpoint manifests
+- Llama-style tensor name mapping
+- layer-shape validation against `LlamaLikeConfig`
+- fused QKV shape derivation
+- q4/q8 packaging shape specs
+
+Out of scope:
+
+- production safetensors loading
+- Hugging Face download support
+- tokenizer integration
+- full model execution from checkpoint
+
+Commands:
+
+```bash
+python examples/checkpoint_manifest_demo.py
+python examples/fuse_qkv_demo.py
+```
+
+This scaffold is intended to prepare the repo for future checkpoint adapter work without adding heavy dependencies.
+
+## API examples
+
+### Attention API
 
 ```python
-from ops.mlp_block_ops import quantized_mlp_block
+import mlx.core as mx
+from ops.attention_ops import fast_attention
 
-y = quantized_mlp_block(
-    x,
-    residual,
-    norm_weight,
-    gate_w,
-    gate_scales,
-    up_w,
-    up_scales,
-    down_w,
-    down_scales,
-    bits=4,
-    matvec_backend="metal_tiled",
+Q = mx.random.normal((1, 128, 8, 64)).astype(mx.float16)
+K = mx.random.normal((1, 128, 8, 64)).astype(mx.float16)
+V = mx.random.normal((1, 128, 8, 64)).astype(mx.float16)
+
+O = fast_attention(Q, K, V, causal=True, backend="auto")
+O_exp = fast_attention(Q, K, V, causal=True, backend="row_parallel")
+```
+
+### Decode API
+
+```python
+import mlx.core as mx
+from ops.decode_block_ops import decode_block_from_qkv
+from ops.gqa_ops import gqa_decode_block_from_qkv
+
+cos = mx.random.normal((132, 32)).astype(mx.float32)
+sin = mx.random.normal((132, 32)).astype(mx.float32)
+packed_qkv = mx.random.normal((1, 1, 3 * 8 * 64)).astype(mx.float16)
+K_cache = mx.zeros((1, 128, 8, 64), dtype=mx.float16)
+V_cache = mx.zeros((1, 128, 8, 64), dtype=mx.float16)
+
+out, K_cache, V_cache = decode_block_from_qkv(packed_qkv, K_cache, V_cache, cos, sin, 0, H=8, D=64, backend="auto")
+
+gqa_qkv = mx.random.normal((1, 1, 32 * 128 + 2 * 8 * 128)).astype(mx.float16)
+gqa_K = mx.zeros((1, 128, 8, 128), dtype=mx.float16)
+gqa_V = mx.zeros((1, 128, 8, 128), dtype=mx.float16)
+gqa_out, gqa_K, gqa_V = gqa_decode_block_from_qkv(
+    gqa_qkv, gqa_K, gqa_V, cos, sin, 0, num_attention_heads=32, num_key_value_heads=8, head_dim=128, backend="reference"
 )
 ```
 
-Benchmark it with:
+### Quantized matvec API
 
-```bash
-python benchmarks/bench_quantized_mlp_block.py --bits 4 --B 1 --S 1 --hidden-size 4096 --intermediate-size 11008 --dtype float16 --backend-preset all
+```python
+import mlx.core as mx
+from ops.quant_ops import pack_q4, q4_matvec_decode
+
+x = mx.random.normal((1, 64)).astype(mx.float16)
+q4_vals = (mx.random.uniform((32, 64)) * 16).astype(mx.uint8)
+packed_w = pack_q4(q4_vals)
+scales = mx.ones((32, 2), dtype=mx.float32)
+
+y = q4_matvec_decode(x, packed_w, scales, group_size=32, backend="metal_tiled")
 ```
 
-This project does not claim performance superiority without benchmark data from a specific Apple Silicon machine.
+### Toy transformer API
+
+```python
+import mlx.core as mx
+from ops.toy_transformer_ops import make_toy_layer_weights, toy_transformer_decode_layer
+
+weights = make_toy_layer_weights(512, 1024, bits=4, group_size=32)
+x = mx.random.normal((1, 1, 512)).astype(mx.float16)
+K_cache = mx.zeros((1, 64, 8, 64), dtype=mx.float16)
+V_cache = mx.zeros((1, 64, 8, 64), dtype=mx.float16)
+cos = mx.random.normal((68, 32)).astype(mx.float32)
+sin = mx.random.normal((68, 32)).astype(mx.float32)
+
+y, K_cache, V_cache = toy_transformer_decode_layer(
+    x,
+    weights["attn_norm_weight"].astype(mx.float16),
+    weights["ffn_norm_weight"].astype(mx.float16),
+    weights["qkv_w"],
+    weights["qkv_scales"],
+    weights["out_w"],
+    weights["out_scales"],
+    weights["gate_w"],
+    weights["gate_scales"],
+    weights["up_w"],
+    weights["up_scales"],
+    weights["down_w"],
+    weights["down_scales"],
+    K_cache,
+    V_cache,
+    cos,
+    sin,
+    0,
+    bits=4,
+    H=8,
+    D=64,
+)
+```
+
+### Autotuning API
+
+```python
+from ops.autotune_ops import select_backend
+
+backend = select_backend(
+    "q4_matvec_decode",
+    {"B": 1, "K": 4096, "N": 4096, "group_size": 32},
+    "float16",
+    default_backend="metal_parallel",
+)
+```
+
+## Verification philosophy
+
+Every optimized backend should have a pure MLX reference path.
+
+The intended workflow is:
+
+1. generate random test inputs
+2. run reference implementation
+3. run Metal or custom backend
+4. compare outputs within dtype-appropriate tolerance
+5. only then benchmark
+
+Experimental backends may be disabled by default until they are repeatedly validated on Apple Silicon.
 
 ## Roadmap
 
-1. Baseline streaming row kernel. **Stable default path.**
-2. Row-parallel threadgroup kernel. **Experimental path.**
-3. Tiled K/V threadgroup-memory kernel.
-4. Simdgroup reduction kernel.
-5. `simdgroup_matrix` QK/PV kernel.
-6. Specialized `D=64` and `D=128` kernels.
-7. Decode / paged-KV path.
-8. Experimental specialized decode/paged-decode kernels.
-
-## What this project is not claiming yet
-
-This project does not yet claim to outperform MLX native attention or to match
-CUDA/HIP FlashAttention kernels. Any performance claims should come only from
-benchmarks run on Apple Silicon after both correctness paths pass validation.
-
-## Verification status
-
-The benchmark script validates non-reference backends against
-`reference_attention` before timing them. The Metal kernels and MLX runtime
-behavior still must be verified on Apple Silicon.
-If you run this repo on a non-Apple host without `mlx`, code structure can be
-updated but runtime correctness and performance remain unverified.
+- [x] Baseline MLX custom Metal attention
+- [x] Reference correctness path
+- [x] Row-parallel and tiled-K/V attention experiments
+- [x] RMSNorm, RoPE, SwiGLU, residual helpers
+- [x] KV-cache update and decode attention
+- [x] Paged KV-cache and paged decode attention
+- [x] Fused decode block helpers
+- [x] q4/q8 dequantization and decode matvec
+- [x] Parallel and tiled q4/q8 matvec
+- [x] Quantized decode block
+- [x] Threadgroup attention v2
+- [x] Simdgroup attention experiments
+- [x] Unified benchmark and report suite
+- [x] Chip-specific autotuning
+- [x] Toy transformer-layer decode benchmark
+- [x] Llama-like model integration scaffold
+- [x] Quantized MLP block
+- [x] GQA/MQA support
+- [x] Checkpoint layout loader scaffold
+- [ ] Optimized GQA Metal decode attention
+- [ ] Fused q4 MLP kernel
+- [ ] Real checkpoint adapter
