@@ -15,6 +15,7 @@ from ops.decode_block_ops import decode_block_from_qkv, paged_decode_block_from_
 from ops.decode_ops import decode_attention
 from ops.fused_ops import fused_decode_step_from_qkv, qkv_rope_cache_update
 from ops.layout_ops import qkv_split, qkv_split_rope
+from ops.mlp_block_ops import quantized_mlp_block
 from ops.norm_ops import rms_norm
 from ops.paged_kv_ops import allocate_paged_kv_cache, paged_decode_attention
 from ops.quant_ops import dequant_q4, dequant_q8, pack_q4, q4_matvec_decode, q8_matvec_decode
@@ -264,6 +265,40 @@ def _quantized_decode_block_cases(results, dtype, dtype_name, quick, iters, fail
         _run(results, "quantized_decode_block", "paged_quantized_decode_block", "parallel+metal", dtype_name, shape, lambda xx=x, qq=qkv_w, qs=qkv_scales, ow=out_w, os=out_scales, kk=K_pages, vv=V_pages, bt=block_table, cc=cos, ss=sin, hh=H, dd=D, gs=group_size, bb=bits: time_fn(lambda: paged_quantized_decode_block(xx, qq, qs, ow, os, kk, vv, bt, cc, ss, 0, bits=bb, group_size=gs, H=hh, D=dd, matvec_backend="metal_parallel", block_backend="metal"), warmup=3, iters=iters), fail_fast)
 
 
+def _quantized_mlp_block_cases(results, dtype, dtype_name, quick, iters, fail_fast):
+    shapes = (
+        [{"bits": 4, "B": 1, "S": 1, "hidden_size": 64, "intermediate_size": 128, "group_size": 32}]
+        if quick
+        else [
+            {"bits": 4, "B": 1, "S": 1, "hidden_size": 4096, "intermediate_size": 11008, "group_size": 32},
+            {"bits": 4, "B": 1, "S": 16, "hidden_size": 4096, "intermediate_size": 11008, "group_size": 32},
+        ]
+    )
+    presets = {
+        "reference": {"norm_backend": "reference", "matvec_backend": "reference", "activation_backend": "reference", "residual_backend": "reference"},
+        "metal": {"norm_backend": "metal", "matvec_backend": "metal", "activation_backend": "metal", "residual_backend": "metal"},
+        "parallel": {"norm_backend": "metal", "matvec_backend": "metal_parallel", "activation_backend": "metal", "residual_backend": "metal"},
+        "tiled": {"norm_backend": "metal", "matvec_backend": "metal_tiled", "activation_backend": "metal", "residual_backend": "metal"},
+    }
+    for shape in shapes:
+        bits = shape["bits"]
+        B, S = shape["B"], shape["S"]
+        hidden_size, intermediate_size, group_size = shape["hidden_size"], shape["intermediate_size"], shape["group_size"]
+        groups_hidden = (hidden_size + group_size - 1) // group_size
+        groups_intermediate = (intermediate_size + group_size - 1) // group_size
+        x = mx.random.normal((B, S, hidden_size)).astype(dtype)
+        residual = mx.random.normal((B, S, hidden_size)).astype(dtype)
+        norm_weight = mx.ones((hidden_size,), dtype=dtype)
+        gate_w = pack_q4((mx.random.uniform((intermediate_size, hidden_size)) * 16).astype(mx.uint8))
+        up_w = pack_q4((mx.random.uniform((intermediate_size, hidden_size)) * 16).astype(mx.uint8))
+        down_w = pack_q4((mx.random.uniform((hidden_size, intermediate_size)) * 16).astype(mx.uint8))
+        gate_scales = mx.random.normal((intermediate_size, groups_hidden)).astype(mx.float32)
+        up_scales = mx.random.normal((intermediate_size, groups_hidden)).astype(mx.float32)
+        down_scales = mx.random.normal((hidden_size, groups_intermediate)).astype(mx.float32)
+        for preset, kwargs in presets.items():
+            _run(results, "quantized_mlp_block", "quantized_mlp_block", preset, dtype_name, shape, lambda xx=x, rr=residual, nw=norm_weight, gw=gate_w, gs=gate_scales, uw=up_w, us=up_scales, dw=down_w, ds=down_scales, bb=bits, gsz=group_size, kk=kwargs: time_fn(lambda: quantized_mlp_block(xx, rr, nw, gw, gs, uw, us, dw, ds, bits=bb, group_size=gsz, **kk), warmup=3, iters=iters), fail_fast)
+
+
 def _threadgroup_attention_v2_cases(results, dtype, dtype_name, quick, iters, fail_fast):
     decode_shapes = [{"B": 1, "MAX_S": 64, "H": 4, "D": 64, "length": 64}] if quick else [
         {"B": 1, "MAX_S": 128, "H": 8, "D": 64, "length": 128},
@@ -375,6 +410,7 @@ def main():
     _quant_matvec_tiled_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _decode_block_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _quantized_decode_block_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
+    _quantized_mlp_block_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _threadgroup_attention_v2_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _simdgroup_attention_cases(results, dtype, args.dtype, quick, iters)
     _toy_transformer_decode_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)

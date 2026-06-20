@@ -8,6 +8,7 @@ from ops.activation_ops import swiglu
 from ops.autotune_ops import select_backend
 from ops.decode_block_ops import decode_block_from_qkv, paged_decode_block_from_qkv
 from ops.fused_ops import residual_add
+from ops.mlp_block_ops import quantized_mlp_block
 from ops.norm_ops import rms_norm
 from ops.paged_kv_ops import allocate_paged_kv_cache
 from ops.toy_transformer_ops import make_toy_layer_weights, paged_toy_transformer_decode_layer, toy_transformer_decode_layer
@@ -79,6 +80,11 @@ class LlamaLikeKernelAdapter:
             "cache_layout": self.cache_layout,
             "backend_config": asdict(self.backend_config),
             "fused_qkv_shape": fused_qkv_spec(self.config).expected_shape(),
+            "mlp_shapes": {
+                "gate_proj": (self.config.intermediate_size, self.config.hidden_size),
+                "up_proj": (self.config.intermediate_size, self.config.hidden_size),
+                "down_proj": (self.config.hidden_size, self.config.intermediate_size),
+            },
             "gqa_supported": self.config.num_attention_heads == self.config.num_key_value_heads,
         }
 
@@ -235,6 +241,59 @@ class LlamaLikeKernelAdapter:
             residual_backend="metal",
         )
         return out, LlamaLayerState(K_cache=None, V_cache=None, K_pages=updated_K, V_pages=updated_V, block_table=layer_state.block_table)
+
+    def run_quantized_mlp_block(
+        self,
+        x,
+        residual,
+        norm_weight,
+        gate_w,
+        gate_scales,
+        up_w,
+        up_scales,
+        down_w,
+        down_scales,
+        *,
+        gate_zeros=None,
+        up_zeros=None,
+        down_zeros=None,
+        bits=4,
+        group_size=32,
+        return_intermediates=False,
+    ):
+        matvec_backend = self.choose_backend(
+            "q4_matvec_decode" if bits == 4 else "q8_matvec_decode",
+            {
+                "B": x.shape[0],
+                "S": x.shape[1],
+                "K": self.config.hidden_size,
+                "N": self.config.intermediate_size,
+                "group_size": group_size,
+            },
+            x.dtype,
+        )
+        return quantized_mlp_block(
+            x,
+            residual,
+            norm_weight,
+            gate_w,
+            gate_scales,
+            up_w,
+            up_scales,
+            down_w,
+            down_scales,
+            gate_zeros=gate_zeros,
+            up_zeros=up_zeros,
+            down_zeros=down_zeros,
+            bits=bits,
+            group_size=group_size,
+            eps=self.config.rms_norm_eps,
+            norm_backend=self.backend_config.norm_backend,
+            matvec_backend=matvec_backend,
+            activation_backend=self.backend_config.activation_backend,
+            residual_backend="metal",
+            return_intermediates=return_intermediates,
+        )
 
     def make_demo_quantized_weights(self, *, bits: int = 4, group_size: int = 32):
         self.validate_supported()

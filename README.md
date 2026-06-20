@@ -32,6 +32,7 @@ Longer term, this repo is intended to become an experimental kernel lab for MLX 
 - Paged KV-cache: paged cache allocation, updates, and paged decode attention scaffolds.
 - Fused Decode Block: composition-first contiguous and paged decode helpers from projected QKV tokens.
 - Quantized Decode Block: composition-first q4/q8 decode blocks built from quantized matvec plus decode-attention helpers.
+- Quantized MLP Block: composition-first q4/q8 feed-forward block built from RMSNorm, quantized projections, SwiGLU, and residual add.
 - Toy transformer decode benchmark: end-to-end single-layer decode composition built from existing RMSNorm, quantized attention, SwiGLU, and residual primitives.
 - Shape-specialized kernels: experimental D=64 and D=128 attention/decode backends.
 - Future: paged KV, quantized matvec, and tiled attention kernels.
@@ -148,6 +149,7 @@ python benchmarks/bench_quant_matvec_tiled.py --bits 4 --B 1 --K 4096 --N 4096 -
 python benchmarks/bench_quant_matvec_tiled.py --bits 8 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
 python benchmarks/bench_quantized_decode_block.py --bits 4 --cache contiguous --B 1 --K 4096 --H 32 --D 128 --MAX_S 128 --T 16 --dtype float16 --backend-preset parallel
 python benchmarks/bench_quantized_decode_block.py --bits 4 --cache paged --B 1 --K 4096 --H 32 --D 128 --MAX_S 128 --PAGE_SIZE 16 --T 16 --dtype float16 --backend-preset parallel
+python benchmarks/bench_quantized_mlp_block.py --bits 4 --B 1 --S 1 --hidden-size 4096 --intermediate-size 11008 --dtype float16 --backend-preset all
 python benchmarks/bench_threadgroup_attention.py --mode decode --B 1 --MAX_S 128 --H 8 --D 64 --length 128 --dtype float16 --backend all
 python benchmarks/bench_threadgroup_attention.py --mode paged_decode --B 1 --MAX_S 128 --PAGE_SIZE 16 --H 8 --D 64 --length 128 --dtype float16 --backend all
 python benchmarks/bench_threadgroup_attention.py --mode prefill --B 1 --S 128 --H 8 --D 64 --dtype float16 --backend all
@@ -188,6 +190,7 @@ python benchmarks/bench_quant_matvec_parallel.py --bits 4 --B 1 --K 4096 --N 409
 python benchmarks/bench_quant_matvec_parallel.py --bits 8 --B 1 --K 4096 --N 4096 --dtype float16 --backend all
 python benchmarks/bench_quantized_decode_block.py --bits 4 --cache contiguous --B 1 --K 4096 --H 32 --D 128 --MAX_S 128 --T 16 --dtype float16 --backend-preset parallel
 python benchmarks/bench_quantized_decode_block.py --bits 4 --cache paged --B 1 --K 4096 --H 32 --D 128 --MAX_S 128 --PAGE_SIZE 16 --T 16 --dtype float16 --backend-preset parallel
+python benchmarks/bench_quantized_mlp_block.py --bits 4 --B 1 --S 1 --hidden-size 4096 --intermediate-size 11008 --dtype float16 --backend-preset all
 ```
 
 ## API
@@ -201,6 +204,7 @@ from ops.decode_block_ops import decode_block_from_qkv, paged_decode_block_from_
 from ops.fused_ops import fused_decode_step_from_qkv, qkv_rope_cache_update, residual_add, rmsnorm_residual
 from ops.kv_cache_ops import kv_cache_update
 from ops.layout_ops import qkv_split, qkv_split_rope
+from ops.mlp_block_ops import quantized_mlp_block
 from ops.norm_ops import rms_norm
 from ops.paged_kv_ops import allocate_paged_kv_cache, paged_decode_attention, paged_decode_step, paged_kv_cache_update
 from ops.quant_ops import dequant_q4, dequant_q8, pack_q4, q4_matvec_decode, q8_matvec_decode
@@ -302,6 +306,19 @@ y_qblock, K_cache, V_cache = quantized_decode_block(
     D=64,
     matvec_backend="metal_parallel",
     block_backend="metal",
+)
+y_mlp = quantized_mlp_block(
+    mx.random.normal((1, 1, 512)).astype(mx.float16),
+    mx.random.normal((1, 1, 512)).astype(mx.float16),
+    mx.ones((512,), dtype=mx.float16),
+    pack_q4((mx.random.uniform((1024, 512)) * 16).astype(mx.uint8)),
+    mx.ones((1024, 16), dtype=mx.float32),
+    pack_q4((mx.random.uniform((1024, 512)) * 16).astype(mx.uint8)),
+    mx.ones((1024, 16), dtype=mx.float32),
+    pack_q4((mx.random.uniform((512, 1024)) * 16).astype(mx.uint8)),
+    mx.ones((512, 32), dtype=mx.float32),
+    bits=4,
+    matvec_backend="metal_tiled",
 )
 y_layer, K_cache, V_cache = toy_transformer_decode_layer(
     mx.random.normal((1, 1, 512)).astype(mx.float16),
@@ -412,6 +429,34 @@ python examples/llama_like_decode_demo.py
 ```
 
 This repo does not yet provide production Llama inference or full checkpoint loading. The current scope is configuration, weight-layout mapping, cache setup, and decode-layer integration scaffolding on top of the existing kernel building blocks.
+
+## Quantized MLP Block
+
+`ops/mlp_block_ops.py` adds a shared q4/q8 feed-forward block for Llama-like decode layers. It composes residual add, RMSNorm, quantized gate and up projections, SwiGLU, a quantized down projection, and the final residual update without introducing a monolithic new default kernel.
+
+```python
+from ops.mlp_block_ops import quantized_mlp_block
+
+y = quantized_mlp_block(
+    x,
+    residual,
+    norm_weight,
+    gate_w,
+    gate_scales,
+    up_w,
+    up_scales,
+    down_w,
+    down_scales,
+    bits=4,
+    matvec_backend="metal_tiled",
+)
+```
+
+Benchmark it with:
+
+```bash
+python benchmarks/bench_quantized_mlp_block.py --bits 4 --B 1 --S 1 --hidden-size 4096 --intermediate-size 11008 --dtype float16 --backend-preset all
+```
 
 This project does not claim performance superiority without benchmark data from a specific Apple Silicon machine.
 

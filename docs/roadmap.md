@@ -27,10 +27,11 @@
 15. v0.15 simdgroup_matrix attention experiments
 16. v0.16 Chip-specific autotuning + backend selection registry
 17. v0.17 Real model integration scaffold
-18. v0.18 q4 MLP fused block
+18. v0.18 q4/q8 MLP fused block
 19. v0.19 GQA/MQA support
 20. v0.20 real checkpoint loader scaffold
-21. v1.0 stable experimental kernel suite
+21. v0.21 fused q4 MLP kernel
+22. v1.0 stable experimental kernel suite
 
 ## v0.2: Transformer primitives
 
@@ -129,10 +130,10 @@
 - Add Llama-like config, weight-layout specs, and adapter helpers around the current decode-layer kernels.
 - Keep the first scaffold explicit, lightweight, and focused on future checkpoint integration.
 
-## v0.18: q4 MLP fused block
+## v0.18: q4/q8 MLP fused block
 
 - Extend quantized transformer composition beyond attention into MLP-heavy decode blocks.
-- Reuse validated q4 matvec primitives before adding new fused kernels.
+- Reuse validated q4/q8 matvec primitives before adding new fused kernels.
 
 ## v0.19: GQA/MQA support
 
@@ -143,6 +144,11 @@
 
 - Add a lightweight checkpoint-loading bridge once the layout contracts stabilize.
 - Keep production model loading, tokenizer integration, and full inference loops out of scope until the scaffold is validated.
+
+## v0.21: fused q4 MLP kernel
+
+- Explore a dedicated q4 MLP kernel once the composition-first block is benchmarked and validated.
+- Keep any future fused path behind explicit backend flags until Apple Silicon measurements justify it.
 
 ## Historical notes
 

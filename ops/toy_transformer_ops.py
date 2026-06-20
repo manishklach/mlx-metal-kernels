@@ -2,18 +2,16 @@ from __future__ import annotations
 
 import mlx.core as mx
 
-from .activation_ops import reference_swiglu, swiglu
 from .fused_ops import reference_residual_add, residual_add
+from .mlp_block_ops import quantized_mlp_block, reference_quantized_mlp_block
 from .norm_ops import reference_rms_norm, rms_norm
 from .paged_kv_ops import allocate_paged_kv_cache
 from .quantized_decode_block_ops import (
     normalize_hidden_input,
     paged_quantized_decode_block,
     quantized_decode_block,
-    quantized_output_projection,
     reference_paged_quantized_decode_block,
     reference_quantized_decode_block,
-    reference_quantized_output_projection,
     validate_quantized_weight_shapes,
 )
 
@@ -240,27 +238,46 @@ def toy_transformer_decode_layer(
         if residual_backend == "reference"
         else residual_add(attn_out, x3d, backend=residual_backend)
     )
-    ffn_in = (
-        reference_rms_norm(post_attn, ffn_norm_weight, eps=eps)
-        if norm_backend == "reference"
-        else rms_norm(post_attn, ffn_norm_weight, eps=eps, backend=norm_backend)
-    )
-    if matvec_backend == "reference":
-        gate = reference_quantized_output_projection(ffn_in, gate_w, gate_scales, gate_zeros, bits=bits, group_size=group_size)
-        up = reference_quantized_output_projection(ffn_in, up_w, up_scales, up_zeros, bits=bits, group_size=group_size)
-    else:
-        gate = quantized_output_projection(ffn_in, gate_w, gate_scales, gate_zeros, bits=bits, group_size=group_size, backend=matvec_backend)
-        up = quantized_output_projection(ffn_in, up_w, up_scales, up_zeros, bits=bits, group_size=group_size, backend=matvec_backend)
-    hidden = reference_swiglu(gate, up) if activation_backend == "reference" else swiglu(gate, up, backend=activation_backend)
-    down = (
-        reference_quantized_output_projection(hidden, down_w, down_scales, down_zeros, bits=bits, group_size=group_size)
-        if matvec_backend == "reference"
-        else quantized_output_projection(hidden, down_w, down_scales, down_zeros, bits=bits, group_size=group_size, backend=matvec_backend)
-    )
     out = (
-        reference_residual_add(down, post_attn)
-        if residual_backend == "reference"
-        else residual_add(down, post_attn, backend=residual_backend)
+        reference_quantized_mlp_block(
+            post_attn,
+            mx.zeros_like(post_attn),
+            ffn_norm_weight,
+            gate_w,
+            gate_scales,
+            up_w,
+            up_scales,
+            down_w,
+            down_scales,
+            gate_zeros=gate_zeros,
+            up_zeros=up_zeros,
+            down_zeros=down_zeros,
+            bits=bits,
+            group_size=group_size,
+            eps=eps,
+        )
+        if matvec_backend == "reference" and norm_backend == "reference" and activation_backend == "reference" and residual_backend == "reference"
+        else quantized_mlp_block(
+            post_attn,
+            mx.zeros_like(post_attn),
+            ffn_norm_weight,
+            gate_w,
+            gate_scales,
+            up_w,
+            up_scales,
+            down_w,
+            down_scales,
+            gate_zeros=gate_zeros,
+            up_zeros=up_zeros,
+            down_zeros=down_zeros,
+            bits=bits,
+            group_size=group_size,
+            eps=eps,
+            norm_backend=norm_backend,
+            matvec_backend=matvec_backend,
+            activation_backend=activation_backend,
+            residual_backend=residual_backend,
+        )
     )
     return out, updated_K, updated_V
 
@@ -449,27 +466,46 @@ def paged_toy_transformer_decode_layer(
         if residual_backend == "reference"
         else residual_add(attn_out, x3d, backend=residual_backend)
     )
-    ffn_in = (
-        reference_rms_norm(post_attn, ffn_norm_weight, eps=eps)
-        if norm_backend == "reference"
-        else rms_norm(post_attn, ffn_norm_weight, eps=eps, backend=norm_backend)
-    )
-    if matvec_backend == "reference":
-        gate = reference_quantized_output_projection(ffn_in, gate_w, gate_scales, gate_zeros, bits=bits, group_size=group_size)
-        up = reference_quantized_output_projection(ffn_in, up_w, up_scales, up_zeros, bits=bits, group_size=group_size)
-    else:
-        gate = quantized_output_projection(ffn_in, gate_w, gate_scales, gate_zeros, bits=bits, group_size=group_size, backend=matvec_backend)
-        up = quantized_output_projection(ffn_in, up_w, up_scales, up_zeros, bits=bits, group_size=group_size, backend=matvec_backend)
-    hidden = reference_swiglu(gate, up) if activation_backend == "reference" else swiglu(gate, up, backend=activation_backend)
-    down = (
-        reference_quantized_output_projection(hidden, down_w, down_scales, down_zeros, bits=bits, group_size=group_size)
-        if matvec_backend == "reference"
-        else quantized_output_projection(hidden, down_w, down_scales, down_zeros, bits=bits, group_size=group_size, backend=matvec_backend)
-    )
     out = (
-        reference_residual_add(down, post_attn)
-        if residual_backend == "reference"
-        else residual_add(down, post_attn, backend=residual_backend)
+        reference_quantized_mlp_block(
+            post_attn,
+            mx.zeros_like(post_attn),
+            ffn_norm_weight,
+            gate_w,
+            gate_scales,
+            up_w,
+            up_scales,
+            down_w,
+            down_scales,
+            gate_zeros=gate_zeros,
+            up_zeros=up_zeros,
+            down_zeros=down_zeros,
+            bits=bits,
+            group_size=group_size,
+            eps=eps,
+        )
+        if matvec_backend == "reference" and norm_backend == "reference" and activation_backend == "reference" and residual_backend == "reference"
+        else quantized_mlp_block(
+            post_attn,
+            mx.zeros_like(post_attn),
+            ffn_norm_weight,
+            gate_w,
+            gate_scales,
+            up_w,
+            up_scales,
+            down_w,
+            down_scales,
+            gate_zeros=gate_zeros,
+            up_zeros=up_zeros,
+            down_zeros=down_zeros,
+            bits=bits,
+            group_size=group_size,
+            eps=eps,
+            norm_backend=norm_backend,
+            matvec_backend=matvec_backend,
+            activation_backend=activation_backend,
+            residual_backend=residual_backend,
+        )
     )
     return out, updated_K, updated_V
 

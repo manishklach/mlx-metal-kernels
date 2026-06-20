@@ -21,6 +21,13 @@ from .fused_ops import (
 )
 from .kv_cache_ops import kv_cache_update, reference_kv_cache_update
 from .layout_ops import qkv_split, qkv_split_rope, reference_qkv_split, reference_qkv_split_rope
+from .mlp_block_ops import (
+    quantized_linear,
+    quantized_mlp_block,
+    quantized_mlp_decode_step,
+    reference_quantized_mlp_block,
+    swiglu_down_project,
+)
 from .norm_ops import reference_rms_norm, rms_norm
 from .paged_kv_ops import (
     allocate_paged_kv_cache,
@@ -103,6 +110,7 @@ __all__ = [
     "reference_rms_norm",
     "reference_rmsnorm_residual",
     "reference_swiglu",
+    "reference_quantized_mlp_block",
     "reference_toy_transformer_decode_layer",
     "allocate_paged_kv_cache",
     "block_table_lookup",
@@ -116,7 +124,10 @@ __all__ = [
     "paged_decode_step",
     "paged_kv_cache_update",
     "pack_q4",
+    "quantized_linear",
     "quantized_decode_block",
+    "quantized_mlp_block",
+    "quantized_mlp_decode_step",
     "quantized_output_projection",
     "quantized_qkv_projection",
     "q4_matvec_decode",
@@ -129,6 +140,7 @@ __all__ = [
     "rms_norm",
     "rmsnorm_residual",
     "swiglu",
+    "swiglu_down_project",
     "toy_transformer_decode_layer",
     "unpack_q4_reference",
     "fast_attention_with_split",
