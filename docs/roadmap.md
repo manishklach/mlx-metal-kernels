@@ -32,7 +32,7 @@ This repo is evolving as an experimental Apple Silicon MLX/Metal kernel lab for 
 - [x] Tokenizer and sampling demo
 - [x] Multi-layer decode stack
 - [x] Production checkpoint converter
-- [ ] Real tokenizer adapter
+- [x] Real tokenizer adapter
 - [ ] Full tiny-model generation demo
 - [ ] Optimized prefill stack
 
@@ -165,6 +165,14 @@ The intended workflow for each new primitive is:
 
 ### v0.30 real tokenizer adapter
 
+- [x] TokenizerProtocol extended with add_special_tokens, skip_special_tokens, and special token id properties
+- [x] HFTokenizerAdapter for local tokenizer JSON (optional `tokenizers` package)
+- [x] SentencePieceTokenizerAdapter for local .model files (optional `sentencepiece` package)
+- [x] TokenizerAdapterFactory with auto-detection by file extension
+- [x] describe_tokenizer helper
+- [x] load_tokenizer_for_generation helper
+- [x] tokenizer adapter demo
+- [x] tests without optional dependencies
 - add an optional adapter layer for real tokenizer integration without forcing heavy defaults
 - keep production tokenizer claims out of scope until checkpoint and runtime wiring are more complete
 

@@ -479,6 +479,40 @@ python scripts/inspect_quantized_package.py /tmp/mlx_quant_package.json
 python examples/checkpoint_converter_demo.py
 ```
 
+## Real tokenizer adapter scaffold
+
+The repo includes optional tokenizer adapters for local tokenizer files.
+
+Current scope:
+
+- toy CharTokenizer and WhitespaceTokenizer
+- optional `tokenizers` JSON adapter (HFTokenizerAdapter)
+- optional SentencePiece `.model` adapter (SentencePieceTokenizerAdapter)
+- TokenizerAdapterFactory for auto-detection by file extension
+- describe_tokenizer helper for metadata
+- load_tokenizer_for_generation for generation scaffold integration
+- no network access
+- no model/tokenizer downloads
+- unified encode/decode interface for generation scaffolds
+
+Out of scope:
+
+- production chat formatting
+- Hugging Face hub downloads
+- transformers tokenizer auto-loading
+- prompt templates
+- model-specific tokenizer correctness guarantees
+
+Commands:
+
+```bash
+python examples/tokenizer_adapter_demo.py
+python examples/tokenizer_adapter_demo.py --tokenizer /path/to/tokenizer.json --kind hf-tokenizers
+python examples/tokenizer_adapter_demo.py --tokenizer /path/to/tokenizer.model --kind sentencepiece
+```
+
+Note: Optional tokenizer packages are not required for the repo. Install them separately only if you want local real-tokenizer experiments.
+
 ## Tokenizer and sampling scaffold
 
 The repo includes a lightweight tokenizer, sampling, and generation scaffold for synthetic single-layer experiments.

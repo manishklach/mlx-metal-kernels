@@ -74,6 +74,15 @@ from .quantized_package_io import (
 from .sampling import apply_repetition_penalty, greedy_sample, sample_logits, softmax, top_k_filter, top_p_filter
 from .tensor_store import InMemoryTensorStore, ManifestTensorStore, SafeTensorsTensorStore, TensorStore
 from .tokenization import CharTokenizer, TokenizerProtocol, WhitespaceTokenizer
+from .tokenizer_adapters import (
+    HFTokenizerAdapter,
+    OptionalDependencyError,
+    SentencePieceTokenizerAdapter,
+    TokenizerAdapterFactory,
+    TokenizerInfo,
+    describe_tokenizer,
+    load_tokenizer_for_generation,
+)
 from .weight_layouts import LayerWeightSpec, LinearWeightSpec, fused_qkv_spec, llama_layer_weight_specs, validate_weight_shapes
 
 try:
@@ -84,6 +93,8 @@ except ImportError:  # pragma: no cover - allows shape-only helpers without MLX 
     LlamaLikeKernelAdapter = None
 
 __all__ = [
+    "describe_tokenizer",
+    "HFTokenizerAdapter",
     "CheckpointConverter",
     "CheckpointConverterConfig",
     "CheckpointConverterReport",
@@ -119,8 +130,10 @@ __all__ = [
     "llama_layer_weight_specs",
     "llama_quantized_layer_specs",
     "LlamaLikeConfig",
+    "load_tokenizer_for_generation",
     "ManifestTensorStore",
     "missing_required_tensors",
+    "OptionalDependencyError",
     "mistral_layer_tensor_names",
     "q4_packed_shape",
     "q8_packed_shape",
@@ -128,6 +141,7 @@ __all__ = [
     "quantized_linear_spec",
     "QuantizationConfig",
     "QuantizationReport",
+    "SentencePieceTokenizerAdapter",
     "QuantizedCheckpointPackage",
     "QuantizedLayerMetadata",
     "QuantizedLinearPackage",
@@ -147,6 +161,8 @@ __all__ = [
     "TensorStore",
     "tiny_debug_config",
     "tiny_gqa_debug_config",
+    "TokenizerAdapterFactory",
+    "TokenizerInfo",
     "TokenizerProtocol",
     "top_k_filter",
     "top_p_filter",
