@@ -521,7 +521,9 @@ def reference_q4_matvec_decode(
     if K_packed * 2 != K:
         raise ValueError(f"packed_w implies K={K_packed * 2}, but x has K={K}")
     W = reference_dequant_q4(packed_w, scales, zeros, group_size=group_size, out_dtype=x2d.dtype)
-    return mx.matmul(x2d.astype(mx.float32), W.astype(mx.float32).transpose()).astype(x2d.dtype)
+    result = mx.matmul(x2d.astype(mx.float32), W.astype(mx.float32).transpose())
+    finfo = mx.finfo(x2d.dtype)
+    return mx.clip(result, finfo.min, finfo.max).astype(x2d.dtype)
 
 
 def q4_matvec_decode(
@@ -581,7 +583,9 @@ def reference_q8_matvec_decode(
     if q_w.ndim != 2 or q_w.shape[1] != K:
         raise ValueError(f"q_w must have shape [N,{K}], got {q_w.shape}")
     W = reference_dequant_q8(q_w, scales, zeros, group_size=group_size, out_dtype=x2d.dtype)
-    return mx.matmul(x2d.astype(mx.float32), W.astype(mx.float32).transpose()).astype(x2d.dtype)
+    result = mx.matmul(x2d.astype(mx.float32), W.astype(mx.float32).transpose())
+    finfo = mx.finfo(x2d.dtype)
+    return mx.clip(result, finfo.min, finfo.max).astype(x2d.dtype)
 
 
 def q8_matvec_decode(

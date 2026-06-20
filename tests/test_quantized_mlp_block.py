@@ -17,7 +17,7 @@ def _groups(k, group_size):
 
 def _make_quantized_weights(bits, out_dim, in_dim, group_size):
     groups = _groups(in_dim, group_size)
-    scales = mx.random.uniform((out_dim, groups), low=0.5, high=2.0).astype(mx.float32)
+    scales = mx.random.normal((out_dim, groups)).astype(mx.float32)
     if bits == 4:
         q = (mx.random.uniform((out_dim, in_dim)) * 16).astype(mx.uint8)
         return pack_q4(q), scales
