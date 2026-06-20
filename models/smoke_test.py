@@ -110,7 +110,14 @@ class SmokeTestReport:
         return "\n".join(lines)
 
 
-def inspect_package_executability(package: QuantizedCheckpointPackage, package_path: str | Path | None = None) -> dict[str, Any]:
+def inspect_package_executability(
+    package: QuantizedCheckpointPackage,
+    package_path: str | Path | None = None,
+    *,
+    check_checksums: bool = False,
+) -> dict[str, Any]:
+    from .tensor_data_io import compute_file_checksum
+
     base_dir = Path(package_path).resolve().parent if package_path is not None else None
     has_layers = bool(package.layers)
     has_global_tensors = bool(package.global_tensors)
@@ -118,13 +125,20 @@ def inspect_package_executability(package: QuantizedCheckpointPackage, package_p
     has_lm_head_metadata = "lm_head" in package.global_tensors
     missing_tensor_data: list[str] = []
     present_tensor_data: list[str] = []
+    checksum_mismatches: list[str] = []
+    validated_checksums = 0
 
     for field_name, tensor in _iter_package_tensors(package):
-        if tensor.bits == 0:
-            continue
-        for attr_name in ("data_file", "scales_file", "zeros_file"):
+        is_norm = tensor.bits == 0
+        if is_norm:
+            attr_names = ("data_file",)
+        else:
+            attr_names = ("data_file", "scales_file", "zeros_file")
+        for attr_name in attr_names:
             rel_path = getattr(tensor, attr_name, None)
             if rel_path is None:
+                if is_norm and attr_name != "data_file":
+                    continue
                 missing_tensor_data.append(f"{field_name}.{attr_name}")
                 continue
             resolved = Path(rel_path)
@@ -132,6 +146,18 @@ def inspect_package_executability(package: QuantizedCheckpointPackage, package_p
                 resolved = base_dir / resolved
             if resolved.exists():
                 present_tensor_data.append(str(resolved))
+                if check_checksums and attr_name == "data_file" and tensor.checksum is not None:
+                    try:
+                        actual = compute_file_checksum(resolved)
+                        validated_checksums += 1
+                        if actual != tensor.checksum:
+                            checksum_mismatches.append(
+                                f"{field_name}.data_file: expected {tensor.checksum}, got {actual}"
+                            )
+                    except Exception as exc:
+                        checksum_mismatches.append(
+                            f"{field_name}.data_file: checksum error: {exc}"
+                        )
             else:
                 missing_tensor_data.append(f"{field_name}.{attr_name}:{resolved}")
 
@@ -145,7 +171,9 @@ def inspect_package_executability(package: QuantizedCheckpointPackage, package_p
         "tensor_data_files_present": tensor_data_files_present,
         "missing_tensor_data": missing_tensor_data,
         "present_tensor_data": present_tensor_data,
-        "executable": bool(has_layers and tensor_data_files_present),
+        "checksum_mismatches": checksum_mismatches,
+        "validated_checksums": validated_checksums,
+        "executable": bool(has_layers and tensor_data_files_present and not checksum_mismatches),
     }
 
 

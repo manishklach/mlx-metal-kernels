@@ -7,6 +7,7 @@ from typing import Any
 
 from .llama_config import LlamaLikeConfig
 from .quantized_layer_package import QuantizedLlamaLayerPackage
+from .tensor_data_io import validate_tensor_file
 
 _REQUIRED_LAYER_TENSOR_KEYS = [
     "input_layernorm",
@@ -145,6 +146,72 @@ class QuantizedCheckpointPackage:
     def load_json(cls, path: str | Path) -> QuantizedCheckpointPackage:
         payload = json.loads(Path(path).read_text(encoding="utf-8"))
         return cls.from_dict(payload)
+
+    def has_tensor_data(self, *, require_all: bool = True) -> bool:
+        for _, tensor in _iter_all_tensors(self):
+            if tensor.bits == 0:
+                continue
+            if tensor.data_file is None:
+                if require_all:
+                    return False
+            elif tensor.scales_file is None:
+                if require_all:
+                    return False
+        return True
+
+    def tensor_files(self, base_dir: str | Path | None = None) -> dict[str, str]:
+        result: dict[str, str] = {}
+        base = Path(base_dir).resolve() if base_dir is not None else None
+        for field_name, tensor in _iter_all_tensors(self):
+            if tensor.data_file is not None:
+                key = f"{field_name}.data_file"
+                path = tensor.data_file
+                if base is not None and not Path(path).is_absolute():
+                    path = str(base / path)
+                result[key] = path
+            if tensor.scales_file is not None:
+                key = f"{field_name}.scales_file"
+                path = tensor.scales_file
+                if base is not None and not Path(path).is_absolute():
+                    path = str(base / path)
+                result[key] = path
+            if tensor.zeros_file is not None:
+                key = f"{field_name}.zeros_file"
+                path = tensor.zeros_file
+                if base is not None and not Path(path).is_absolute():
+                    path = str(base / path)
+                result[key] = path
+        return result
+
+    def validate_tensor_files(
+        self, base_dir: str | Path | None = None, *, check_checksums: bool = False
+    ) -> list[str]:
+        issues: list[str] = []
+        base = Path(base_dir).resolve() if base_dir is not None else None
+        for field_name, tensor in _iter_all_tensors(self):
+            if tensor.bits == 0 and tensor.data_file is None:
+                continue
+            for attr_name, suffix in (
+                ("data_file", "weight"),
+                ("scales_file", "scales"),
+                ("zeros_file", "zeros"),
+            ):
+                rel_path = getattr(tensor, attr_name, None)
+                if rel_path is None:
+                    if tensor.bits != 0 or attr_name != "data_file":
+                        continue
+                    issues.append(f"{field_name}.{attr_name}: not set")
+                    continue
+                resolved = Path(rel_path)
+                if not resolved.is_absolute() and base is not None:
+                    resolved = base / resolved
+                expected_checksum = tensor.checksum if check_checksums and attr_name == "data_file" else None
+                file_issues = validate_tensor_file(
+                    resolved, expected_checksum=expected_checksum
+                )
+                for iss in file_issues:
+                    issues.append(f"{field_name}.{attr_name}: {iss}")
+        return issues
 
     def validate(self, *, allow_partial: bool = False) -> QuantizedCheckpointPackage:
         if not self.format_version:
@@ -345,3 +412,11 @@ def package_from_quantized_layers(
         layers=layers,
         metadata=metadata or {},
     )
+
+
+def _iter_all_tensors(package: QuantizedCheckpointPackage):
+    for name, tensor in package.global_tensors.items():
+        yield f"global_tensors.{name}", tensor
+    for layer in package.layers:
+        for name, tensor in layer.tensors.items():
+            yield f"layers[{layer.layer_idx}].tensors.{name}", tensor

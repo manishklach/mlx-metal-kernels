@@ -35,11 +35,6 @@ class CheckpointConverterConfig:
             raise ValueError(
                 f"output_format must be one of {valid_formats}, got {self.output_format!r}"
             )
-        if self.save_tensor_data:
-            raise NotImplementedError(
-                "save_tensor_data=True is not yet implemented. "
-                "Use output_format='json_metadata' for metadata-only packaging."
-            )
         return self
 
 
@@ -129,9 +124,30 @@ class CheckpointConverter:
         )
 
     def save_package(
-        self, package: QuantizedCheckpointPackage, output_path: str | Path
-    ) -> None:
+        self,
+        package: QuantizedCheckpointPackage,
+        output_path: str | Path,
+        quantized_layers: list[QuantizedLlamaLayerPackage] | None = None,
+        *,
+        global_tensors: dict[str, Any] | None = None,
+    ) -> str:
+        if self.converter_config.save_tensor_data:
+            from .quantized_package_writer import PackageWriterConfig, QuantizedPackageWriter
+
+            output_dir = Path(output_path)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            writer = QuantizedPackageWriter(
+                PackageWriterConfig(tensor_subdir="tensors")
+            )
+            writer.write_tensors(
+                package,
+                quantized_layers or [],
+                output_dir,
+                global_tensors=global_tensors,
+            )
+            return str(output_dir / "package.json")
         package.save_json(str(output_path))
+        return str(output_path)
 
     def convert(
         self, output_path: str | Path | None = None
@@ -183,7 +199,9 @@ class CheckpointConverter:
         layers_converted = [pkg.layer_idx for pkg in quantized_packages]
 
         if output_path:
-            self.save_package(package, output_path)
+            actual_path = self.save_package(
+                package, output_path, quantized_layers=quantized_packages
+            )
 
         report = CheckpointConverterReport(
             ok=True,

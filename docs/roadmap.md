@@ -226,6 +226,14 @@ The intended workflow for each new primitive is:
 
 ### v0.35 quantized package tensor-data writer
 
+- [x] `tensor_data_io.py` — numpy `.npy` save/load, shape/dtype/checksum helpers
+- [x] `quantized_package_writer.py` — `QuantizedPackageWriter` with config, checksums, dry-run mode
+- [x] `QuantizedCheckpointPackage` — `has_tensor_data()`, `tensor_files()`, `validate_tensor_files()`
+- [x] `CheckpointConverterConfig.save_tensor_data=True` — wires the writer through the existing converter
+- [x] `SmokeTestConfig.inspect_package_executability` — checksum validation support
+- [x] `scripts/write_quantized_package.py` — CLI with `--synthetic` and `--dry-run` modes
+- [x] `scripts/inspect_quantized_package.py` — `--check-tensor-files`, `--check-checksums`, `--package-root`
+- [x] Tests for all new modules and CLIs
 - extend the metadata-only package format toward optional tensor payload support
 - keep the initial scope focused on deterministic local packaging and loading
 

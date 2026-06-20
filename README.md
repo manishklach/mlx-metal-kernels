@@ -598,6 +598,8 @@ Current scope:
 - q4/q8 layer package metadata
 - package inspection CLI
 - per-layer tensor metadata (original shapes, packed shapes, scales)
+- optional tensor-data writer (`.npy` payloads with SHA256 checksums)
+- synthetic tensor-data generation for testing
 
 Out of scope:
 

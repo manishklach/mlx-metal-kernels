@@ -104,13 +104,26 @@ class TestCheckpointConverter:
         with pytest.raises(ValueError, match="bits must be 4 or 8"):
             CheckpointConverter(adapter, CheckpointConverterConfig(bits=3))
 
-    def test_save_tensor_data_raises(self):
+    def test_save_tensor_data_writes_tensors(self, tmp_path):
         from models.llama_config import tiny_debug_config
 
         config = tiny_debug_config()
         adapter = _build_adapter(config)
-        with pytest.raises(NotImplementedError, match="save_tensor_data"):
-            CheckpointConverter(adapter, CheckpointConverterConfig(save_tensor_data=True))
+        converter = CheckpointConverter(
+            adapter, CheckpointConverterConfig(bits=4, group_size=32, save_tensor_data=True)
+        )
+        out_dir = tmp_path / "pkg"
+        out_dir.mkdir()
+        package, report = converter.convert(output_path=str(out_dir))
+        assert report.ok
+        assert package is not None
+        assert package.has_tensor_data(require_all=True)
+        json_path = out_dir / "package.json"
+        assert json_path.exists()
+        tensor_dir = out_dir / "tensors"
+        assert tensor_dir.is_dir()
+        npy_files = list(tensor_dir.glob("*.npy"))
+        assert len(npy_files) > 0
 
     def test_layer_out_of_range_raises(self):
         from models.llama_config import tiny_debug_config
@@ -154,6 +167,7 @@ class TestCheckpointConverterConfigValidation:
         with pytest.raises(ValueError, match="group_size must be positive"):
             CheckpointConverterConfig(group_size=0).validate()
 
-    def test_save_tensor_data_raises(self):
-        with pytest.raises(NotImplementedError, match="save_tensor_data"):
-            CheckpointConverterConfig(save_tensor_data=True).validate()
+    def test_save_tensor_data_valid(self):
+        config = CheckpointConverterConfig(save_tensor_data=True)
+        validated = config.validate()
+        assert validated.save_tensor_data is True

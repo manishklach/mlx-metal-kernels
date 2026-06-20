@@ -26,6 +26,9 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--validate-alignment", action="store_true", help="Run structured alignment validation.")
     parser.add_argument("--bits", type=int, default=None, help="Optional expected bits override for alignment validation.")
     parser.add_argument("--group-size", type=int, default=None, help="Optional expected group_size override for alignment validation.")
+    parser.add_argument("--check-tensor-files", action="store_true", help="Check tensor file existence and integrity.")
+    parser.add_argument("--check-checksums", action="store_true", help="Also validate checksums of tensor files.")
+    parser.add_argument("--package-root", type=str, default=None, help="Root directory for resolving relative tensor paths.")
     return parser
 
 
@@ -82,6 +85,32 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\n  Layer {layer_key}:")
             for name, shape in tensors.items():
                 print(f"    {name}: {shape}")
+
+    if args.check_tensor_files:
+        from models.smoke_test import inspect_package_executability
+
+        pkg_root = Path(args.package_root) if args.package_root else pkg_path.parent
+        print(f"\nTensor file check (root: {pkg_root}):")
+        issues = package.validate_tensor_files(
+            pkg_root, check_checksums=args.check_checksums
+        )
+        if issues:
+            for iss in issues:
+                print(f"  Issue: {iss}")
+        else:
+            print("  All tensor files present and valid.")
+        executability = inspect_package_executability(
+            package, pkg_path, check_checksums=args.check_checksums
+        )
+        print(f"  Executable: {executability['executable']}")
+        if executability["missing_tensor_data"]:
+            print(f"  Missing: {len(executability['missing_tensor_data'])} entries")
+        if executability["checksum_mismatches"]:
+            print(
+                f"  Checksum mismatches: {len(executability['checksum_mismatches'])}"
+            )
+        for cm in executability["checksum_mismatches"]:
+            print(f"    {cm}")
 
     if args.validate_alignment:
         from models.alignment import (

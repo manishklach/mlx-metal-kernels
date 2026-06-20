@@ -83,6 +83,17 @@ from .quantized_package_io import (
     QuantizedTensorMetadata,
     package_from_quantized_layers,
 )
+from .quantized_package_writer import PackageWriterConfig, PackageWriterReport, QuantizedPackageWriter
+from .tensor_data_io import (
+    TensorDataInfo,
+    compute_file_checksum,
+    load_tensor_npy,
+    save_tensor_npy,
+    tensor_dtype,
+    tensor_nbytes,
+    tensor_shape,
+    validate_tensor_file,
+)
 from .sampling import apply_repetition_penalty, greedy_sample, sample_logits, softmax, top_k_filter, top_p_filter
 from .smoke_test import (
     SmokeTestConfig,
@@ -225,7 +236,18 @@ __all__ = [
     "build_rope_tables",
     "create_pipeline_from_quantized_package",
     "package_from_quantized_layers",
+    "PackageWriterConfig",
+    "PackageWriterReport",
+    "QuantizedPackageWriter",
     "run_local_smoke_test",
+    "TensorDataInfo",
+    "compute_file_checksum",
+    "load_tensor_npy",
+    "save_tensor_npy",
+    "tensor_dtype",
+    "tensor_nbytes",
+    "tensor_shape",
+    "validate_tensor_file",
 ]
 
 if KernelBackendConfig is not None:
