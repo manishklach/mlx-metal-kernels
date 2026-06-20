@@ -361,6 +361,19 @@ def fast_attention(
         else:
             backend_name = "baseline"
 
+    if backend_name == "simdgroup_d64":
+        if D != 64:
+            raise ValueError(f"backend='simdgroup_d64' requires D == 64, got D={D}")
+        if Q.dtype != mx.float16:
+            raise ValueError(
+                "backend='simdgroup_d64' currently supports only mx.float16. "
+                f"Got dtype={Q.dtype}."
+            )
+    elif backend_name == "baseline_d64" and D != 64:
+        raise ValueError(f"backend='baseline_d64' requires D == 64, got D={D}")
+    elif backend_name == "baseline_d128" and D != 128:
+        raise ValueError(f"backend='baseline_d128' requires D == 128, got D={D}")
+
     if os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1":
         return reference_attention(Q, K, V, scale=scale, causal=causal)
     if backend_name == "reference":
