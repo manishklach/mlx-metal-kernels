@@ -17,6 +17,7 @@ from ops.fused_ops import fused_decode_step_from_qkv, qkv_rope_cache_update
 from ops.gqa_ops import gqa_attention, gqa_decode_block_from_qkv, reference_gqa_attention, reference_gqa_decode_attention, reference_paged_gqa_decode_attention
 from ops.layout_ops import qkv_split, qkv_split_rope
 from ops.llama_layer_ops import create_random_quantized_llama_layer_weights, init_llama_layer_cache, llama_layer_decode_loop
+from ops.llama_prefill_ops import _build_rope_tables_numpy, fused_experimental_prefill_backend_config, llama_stack_prefill, metal_prefill_backend_config, reference_prefill_backend_config, tiled_prefill_backend_config
 from ops.llama_stack_ops import create_random_quantized_llama_stack_weights, init_llama_stack_cache, llama_stack_decode_loop
 from ops.mlp_block_ops import quantized_mlp_block, reference_quantized_mlp_block
 from ops.norm_ops import rms_norm
@@ -626,6 +627,60 @@ def _tiny_generation_pipeline_cases(results, dtype, dtype_name, quick, iters, fa
             )
 
 
+def _llama_stack_prefill_cases(results, dtype, dtype_name, quick, iters, fail_fast, use_autotune):
+    _ = use_autotune
+    shapes = (
+        [{"bits": 4, "B": 1, "S": 8, "num_layers": 1, "hidden_size": 64, "intermediate_size": 128, "num_heads": 4, "num_kv_heads": 2, "head_dim": 16, "MAX_S": 16, "cache": "contiguous", "vocab_size": 64}]
+        if quick
+        else [{"bits": 4, "B": 1, "S": 64, "num_layers": 2, "hidden_size": 512, "intermediate_size": 2048, "num_heads": 8, "num_kv_heads": 2, "head_dim": 64, "MAX_S": 128, "cache": "contiguous", "vocab_size": 128}]
+    )
+    backend_map = {
+        "reference": reference_prefill_backend_config,
+        "metal": metal_prefill_backend_config,
+        "tiled": tiled_prefill_backend_config,
+        "fused_experimental": fused_experimental_prefill_backend_config,
+    }
+    for shape in shapes:
+        cfg = LlamaLikeConfig(
+            hidden_size=shape["hidden_size"],
+            intermediate_size=shape["intermediate_size"],
+            num_attention_heads=shape["num_heads"],
+            num_key_value_heads=shape["num_kv_heads"],
+            head_dim=shape["head_dim"],
+            num_hidden_layers=shape["num_layers"],
+            max_position_embeddings=shape["MAX_S"],
+            vocab_size=shape["vocab_size"],
+        ).validate()
+        weights = create_random_quantized_llama_stack_weights(cfg, vocab_size=shape["vocab_size"], bits=shape["bits"], group_size=32, dtype=dtype, seed=shape["bits"] + shape["head_dim"])
+        inputs = mx.random.normal((shape["B"], shape["S"], shape["hidden_size"])).astype(dtype)
+        cos = mx.random.normal((shape["MAX_S"] + 4, shape["head_dim"] // 2)).astype(mx.float32)
+        sin = mx.random.normal((shape["MAX_S"] + 4, shape["head_dim"] // 2)).astype(mx.float32)
+        for backend, backend_fn in backend_map.items():
+            _run(
+                results,
+                "llama_stack_prefill",
+                "llama_stack_prefill",
+                backend,
+                dtype_name,
+                shape,
+                lambda b=backend_fn, xx=inputs, ww=weights, co=cos, si=sin, cf=cfg, sh=shape: time_fn(
+                    lambda: llama_stack_prefill(
+                        xx,
+                        ww,
+                        init_llama_stack_cache(cf, sh["B"], sh["MAX_S"], cache_layout=sh["cache"], dtype=dtype),
+                        co,
+                        si,
+                        cf,
+                        backend_config=b(),
+                        return_logits=True,
+                    ),
+                    warmup=3,
+                    iters=iters,
+                ),
+                fail_fast,
+            )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick", action="store_true")
@@ -664,6 +719,7 @@ def main():
     _toy_transformer_decode_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _llama_layer_decode_cases(results, dtype, args.dtype, quick, iters, args.fail_fast, args.use_autotune)
     _llama_stack_decode_cases(results, dtype, args.dtype, quick, iters, args.fail_fast, args.use_autotune)
+    _llama_stack_prefill_cases(results, dtype, args.dtype, quick, iters, args.fail_fast, args.use_autotune)
     _tiny_generation_pipeline_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
 
     payload = {

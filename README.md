@@ -487,6 +487,33 @@ python benchmarks/bench_tiny_generation_pipeline.py --prompt-len 8 --max-new-tok
 
 The package-based demo is intentionally conservative today. The current quantized package format carries metadata and tensor-layout information, but not the tensor payloads needed for real loading, so the helper raises a clear fallback message and switches to synthetic weights.
 
+## Optimized prefill stack
+
+The repo includes a multi-layer prefill path that processes prompt tokens in sequence form, fills one KV-cache per layer, and then continues generation with decode.
+
+Current scope:
+
+- synthetic/random weights
+- contiguous KV-cache
+- GQA/MQA prefill attention
+- prefill-then-decode demo
+- benchmark against token-by-token decode ingestion
+
+Out of scope:
+
+- production prompt runtime
+- real trained checkpoint execution
+- paged prefill unless explicitly implemented
+- chat templates
+- model downloads
+
+Commands:
+
+```bash
+python examples/prefill_then_decode_demo.py
+python benchmarks/bench_llama_prefill_stack.py --bits 4 --B 1 --S 64 --num-layers 2 --hidden-size 512 --intermediate-size 2048 --num-heads 8 --num-kv-heads 2 --head-dim 64 --MAX_S 128 --dtype float16 --backend-preset all --validate
+```
+
 ## Checkpoint converter scaffold
 
 The repo includes a dependency-light checkpoint converter scaffold for turning local layer tensors into repo-native q4/q8 package metadata.
@@ -724,6 +751,7 @@ Experimental backends may be disabled by default until they are repeatedly valid
 - [x] GQA/MQA support
 - [x] Checkpoint layout loader scaffold
 - [x] Full tiny-model generation demo
+- [x] Optimized prefill stack
 - [ ] Optimized GQA Metal decode attention
 - [ ] Fused q4 MLP kernel
 - [x] Real checkpoint adapter scaffold

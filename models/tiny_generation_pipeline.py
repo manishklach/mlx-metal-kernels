@@ -4,9 +4,16 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .generation import GenerationConfig, ToyGenerationState, ToyLlamaStackGenerationModel, _optional_llama_stack_ops
+from .generation import (
+    GenerationConfig,
+    ToyGenerationState,
+    ToyLlamaStackGenerationModel,
+    _optional_llama_prefill_ops,
+    _optional_llama_stack_ops,
+)
 from .llama_config import LlamaLikeConfig
 from .quantized_package_io import QuantizedCheckpointPackage
+from .sampling import apply_repetition_penalty, greedy_sample, sample_logits
 from .tokenization import CharTokenizer, TokenizerProtocol
 
 
@@ -25,6 +32,7 @@ class TinyGenerationPipelineConfig:
     dtype: str = "float16"
     backend_preset: str = "fused_experimental"
     cache_layout: str = "contiguous"
+    use_prefill: bool = True
 
     def validate(self) -> "TinyGenerationPipelineConfig":
         if self.hidden_size != self.num_attention_heads * self.head_dim:
@@ -96,6 +104,14 @@ class GenerationResult:
         }
 
 
+@dataclass
+class PrefillResult:
+    logits: Any
+    cache: Any
+    next_position: int
+    prompt_length: int
+
+
 class TinyGenerationPipeline:
     """High-level synthetic tiny-model generation pipeline for end-to-end plumbing."""
 
@@ -112,6 +128,7 @@ class TinyGenerationPipeline:
         self.vocab_size = max(int(self.config.vocab_size), int(getattr(self.tokenizer, "vocab_size", self.config.vocab_size)))
         self.generation_config = (generation_config or GenerationConfig()).validate()
         self.generation_config.backend_preset = self.config.backend_preset
+        self._prefill_ops = _optional_llama_prefill_ops()
         if stack_weights is None:
             stack_ops = _optional_llama_stack_ops()
             if stack_ops is None:
@@ -141,6 +158,7 @@ class TinyGenerationPipeline:
             "pipeline": "TinyGenerationPipeline",
             "backend_preset": self.config.backend_preset,
             "cache_layout": self.config.cache_layout,
+            "use_prefill": self.config.use_prefill,
             "bits": self.config.bits,
             "group_size": self.config.group_size,
             "hidden_size": self.llama_config.hidden_size,
@@ -188,7 +206,40 @@ class TinyGenerationPipeline:
         return resolved.validate()
 
     def generate_ids(self, input_ids: list[int], generation_config: GenerationConfig | None = None) -> list[int]:
-        return self.model.generate_token_ids([int(token_id) for token_id in input_ids], (generation_config or self.generation_config).validate())
+        generation_config = (generation_config or self.generation_config).validate()
+        input_ids = [int(token_id) for token_id in input_ids]
+        if not self.config.use_prefill:
+            return self.model.generate_token_ids(input_ids, generation_config)
+        if not input_ids:
+            raise ValueError("input_ids must contain at least one token")
+        prefill = self.prefill_prompt(input_ids, generation_config=generation_config)
+        state = ToyGenerationState(cache=prefill.cache, position=prefill.next_position, generated_ids=list(input_ids))
+        logits = prefill.logits
+        all_ids = list(input_ids)
+        eos_token_id = generation_config.eos_token_id
+        if eos_token_id is None:
+            eos_token_id = getattr(self.tokenizer, "eos_token_id", None)
+        for step_idx in range(generation_config.max_new_tokens):
+            working_logits = logits
+            if generation_config.repetition_penalty > 1.0:
+                working_logits = apply_repetition_penalty(working_logits, state.generated_ids, penalty=generation_config.repetition_penalty)
+            if generation_config.temperature == 1.0 and generation_config.top_k is None and generation_config.top_p is None:
+                next_token = greedy_sample(working_logits)
+            else:
+                sample_seed = None if generation_config.seed is None else generation_config.seed + step_idx
+                next_token = sample_logits(
+                    working_logits,
+                    temperature=generation_config.temperature,
+                    top_k=generation_config.top_k,
+                    top_p=generation_config.top_p,
+                    seed=sample_seed,
+                )
+            next_token = int(next_token)
+            all_ids.append(next_token)
+            if eos_token_id is not None and next_token == eos_token_id:
+                break
+            logits, state = self.model.decode_step(next_token, state, generation_config=generation_config)
+        return all_ids
 
     def reset_cache(self, B: int = 1) -> ToyGenerationState:
         self._state = self.model.init_state(
@@ -204,6 +255,24 @@ class TinyGenerationPipeline:
         generation_config: GenerationConfig | None = None,
     ):
         return self.model.decode_step(int(token_id), state, generation_config or self.generation_config)
+
+    def prefill_prompt(self, input_ids, state: ToyGenerationState | None = None, generation_config: GenerationConfig | None = None) -> PrefillResult:
+        if self._prefill_ops is None:
+            raise RuntimeError("The prefill scaffold could not be loaded.")
+        token_ids = [int(token_id) for token_id in input_ids]
+        if not token_ids:
+            raise ValueError("input_ids must contain at least one token")
+        if state is None:
+            state = self.reset_cache(B=1)
+        if state.position != 0:
+            raise NotImplementedError("Continuation prefill with a non-zero starting state is not implemented yet.")
+        logits, updated_state = self.model.prefill_token_ids(token_ids, state, generation_config=generation_config or self.generation_config)
+        return PrefillResult(
+            logits=logits,
+            cache=updated_state.cache,
+            next_position=updated_state.position,
+            prompt_length=len(token_ids),
+        )
 
     def generate(
         self,
@@ -236,6 +305,7 @@ class TinyGenerationPipeline:
             "num_layers": self.llama_config.num_hidden_layers,
             "hidden_size": self.llama_config.hidden_size,
             "backend_preset": self.config.backend_preset,
+            "use_prefill": self.config.use_prefill,
             "synthetic_weights": True,
         }
         return GenerationResult(

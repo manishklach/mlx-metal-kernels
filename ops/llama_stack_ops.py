@@ -553,3 +553,57 @@ def create_random_quantized_llama_stack_weights(
         embedding = rng.normal(size=(vocab_size, config.hidden_size)).astype(np.float32) if include_embedding else None
         lm_head = rng.normal(size=(vocab_size, config.hidden_size)).astype(np.float32) if include_lm_head else None
     return LlamaStackWeights(layers=layers, final_norm_weight=final_norm_weight, lm_head=lm_head, embedding=embedding).validate(config)
+
+
+def reference_llama_stack_prefill(
+    x,
+    stack_weights,
+    stack_cache,
+    cos,
+    sin,
+    config,
+    *,
+    start_position=0,
+    return_intermediates=False,
+):
+    from .llama_prefill_ops import reference_llama_stack_prefill as _reference_llama_stack_prefill
+
+    return _reference_llama_stack_prefill(
+        x,
+        stack_weights,
+        stack_cache,
+        cos,
+        sin,
+        config,
+        start_position=start_position,
+        return_intermediates=return_intermediates,
+    )
+
+
+def llama_stack_prefill(
+    x,
+    stack_weights,
+    stack_cache,
+    cos,
+    sin,
+    config,
+    *,
+    backend_config=None,
+    start_position=0,
+    return_logits=True,
+    return_intermediates=False,
+):
+    from .llama_prefill_ops import llama_stack_prefill as _llama_stack_prefill
+
+    return _llama_stack_prefill(
+        x,
+        stack_weights,
+        stack_cache,
+        cos,
+        sin,
+        config,
+        backend_config=backend_config,
+        start_position=start_position,
+        return_logits=return_logits,
+        return_intermediates=return_intermediates,
+    )

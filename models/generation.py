@@ -113,6 +113,53 @@ def _optional_llama_stack_ops():
         return None
 
 
+def _optional_llama_prefill_ops():
+    try:
+        import ops.llama_prefill_ops as prefill_module
+        from ops.llama_prefill_ops import (
+            LlamaPrefillBackendConfig,
+            fused_experimental_prefill_backend_config,
+            llama_stack_prefill,
+            prefill_token_ids,
+            reference_prefill_backend_config,
+            tiled_prefill_backend_config,
+            metal_prefill_backend_config,
+        )
+
+        return {
+            "LlamaPrefillBackendConfig": LlamaPrefillBackendConfig,
+            "fused_experimental_prefill_backend_config": fused_experimental_prefill_backend_config,
+            "llama_stack_prefill": llama_stack_prefill,
+            "metal_prefill_backend_config": metal_prefill_backend_config,
+            "prefill_token_ids": prefill_token_ids,
+            "reference_prefill_backend_config": reference_prefill_backend_config,
+            "tiled_prefill_backend_config": tiled_prefill_backend_config,
+            "module": prefill_module,
+        }
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        prefill_path = Path(__file__).resolve().parents[1] / "ops" / "llama_prefill_ops.py"
+        spec = importlib.util.spec_from_file_location("llama_prefill_ops_fallback", prefill_path)
+        if spec is None or spec.loader is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return {
+            "LlamaPrefillBackendConfig": module.LlamaPrefillBackendConfig,
+            "fused_experimental_prefill_backend_config": module.fused_experimental_prefill_backend_config,
+            "llama_stack_prefill": module.llama_stack_prefill,
+            "metal_prefill_backend_config": module.metal_prefill_backend_config,
+            "prefill_token_ids": module.prefill_token_ids,
+            "reference_prefill_backend_config": module.reference_prefill_backend_config,
+            "tiled_prefill_backend_config": module.tiled_prefill_backend_config,
+            "module": module,
+        }
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _backend_config_from_preset(ops, preset: str):
     if ops is None:
         return None
@@ -392,6 +439,7 @@ class ToyLlamaStackGenerationModel:
         self.lm_head = stack_weights.lm_head
         self.vocab_size = int(self.embedding.shape[0]) if self.embedding is not None else 0
         self._stack_ops = _optional_llama_stack_ops()
+        self._prefill_ops = _optional_llama_prefill_ops()
         if self._stack_ops is None:
             raise RuntimeError("The multi-layer stack scaffold could not be loaded.")
 
@@ -407,6 +455,43 @@ class ToyLlamaStackGenerationModel:
 
     def logits_from_hidden(self, hidden):
         return self._stack_ops["module"].logits_from_hidden(hidden, self.lm_head)
+
+    def prefill_token_ids(self, token_ids, state: ToyGenerationState, generation_config: GenerationConfig | None = None):
+        if self._prefill_ops is None:
+            raise RuntimeError("The prefill scaffold could not be loaded.")
+        generation_config = (generation_config or GenerationConfig()).validate()
+        if state.position != 0:
+            raise NotImplementedError("Continuation prefill from a non-zero position is not implemented yet.")
+        rope_fn = self._stack_ops["module"]._build_rope_tables_numpy
+        if mx is not None and _is_mlx_array(self.embedding):
+            from models.llama_config import build_rope_tables
+
+            cos, sin = build_rope_tables(self.config, seq_len=state.cache.max_seq_len + 1, dtype=mx.float32)
+        else:
+            cos, sin = rope_fn(self.config, state.cache.max_seq_len + 1)
+        backend_config = self._prefill_ops["module"]._prefill_backend_from_preset(generation_config.backend_preset)
+        logits, _, updated_cache = self._prefill_ops["prefill_token_ids"](
+            token_ids,
+            self.stack_weights,
+            state.cache,
+            cos,
+            sin,
+            self.config,
+            embedding=self.embedding,
+            backend_config=backend_config,
+            start_position=state.position,
+            return_logits=True,
+        )
+        state.cache = updated_cache
+        token_ids_np = np.asarray(token_ids, dtype=np.int64).reshape(-1)
+        state.position += int(token_ids_np.shape[0])
+        state.generated_ids.extend(int(token_id) for token_id in token_ids_np.tolist())
+        logits_np = _to_numpy(logits)
+        if logits_np.ndim == 3:
+            return logits_np[0, -1, :] if logits_np.shape[0] == 1 else logits_np[:, -1, :], state
+        if logits_np.ndim == 2:
+            return logits_np[0, :] if logits_np.shape[0] == 1 else logits_np, state
+        return logits_np, state
 
     def decode_step(self, token_id, state: ToyGenerationState, generation_config: GenerationConfig | None = None):
         generation_config = (generation_config or GenerationConfig()).validate()

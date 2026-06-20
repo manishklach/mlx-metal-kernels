@@ -34,10 +34,11 @@ This repo is evolving as an experimental Apple Silicon MLX/Metal kernel lab for 
 - [x] Production checkpoint converter
 - [x] Real tokenizer adapter
 - [x] Full tiny-model generation demo
-- [ ] Optimized prefill stack
+- [x] Optimized prefill stack
 - [ ] Tokenizer/checkpoint package alignment
 - [ ] Local real-model smoke test
 - [ ] Quantized package tensor-data writer
+- [ ] Paged prefill
 
 ## Development pattern
 
@@ -191,6 +192,12 @@ The intended workflow for each new primitive is:
 
 ### v0.32 optimized prefill stack
 
+- [x] layer prefill scaffold
+- [x] multi-layer stack prefill
+- [x] token-id prefill helper
+- [x] tiny pipeline `use_prefill=True`
+- [x] prefill-then-decode demo
+- [x] benchmark scaffold
 - extend the stack scaffold with a clearer prefill path on top of the GQA prefill building blocks
 - keep correctness and cache visibility ahead of optimization claims
 
@@ -208,6 +215,11 @@ The intended workflow for each new primitive is:
 
 - extend the metadata-only package format toward optional tensor payload support
 - keep the initial scope focused on deterministic local packaging and loading
+
+### v0.36 paged prefill
+
+- extend prefill from contiguous-only cache filling toward paged KV-cache support
+- keep continuation semantics and validation explicit before broadening defaults
 
 ## Long-term goal
 

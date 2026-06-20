@@ -75,6 +75,7 @@ from .sampling import apply_repetition_penalty, greedy_sample, sample_logits, so
 from .tensor_store import InMemoryTensorStore, ManifestTensorStore, SafeTensorsTensorStore, TensorStore
 from .tiny_generation_pipeline import (
     GenerationResult,
+    PrefillResult,
     TinyGenerationPipeline,
     TinyGenerationPipelineConfig,
     create_pipeline_from_quantized_package,
@@ -195,3 +196,4 @@ __all__ = [
 
 if KernelBackendConfig is not None:
     __all__.extend(["KernelBackendConfig", "LlamaLayerState", "LlamaLikeKernelAdapter"])
+    "PrefillResult",
