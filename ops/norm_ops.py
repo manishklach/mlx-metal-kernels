@@ -62,6 +62,8 @@ def rms_norm(
     backend_name = backend.lower()
     if backend_name == "auto":
         backend_name = "metal"
+    if os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1":
+        return reference_rms_norm(x, weight, eps=eps)
     if backend_name == "reference":
         return reference_rms_norm(x, weight, eps=eps)
     if backend_name != "metal":

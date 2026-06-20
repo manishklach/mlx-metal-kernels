@@ -119,6 +119,8 @@ def kv_cache_update(
     backend_name = backend.lower()
     if backend_name == "auto":
         backend_name = "metal"
+    if os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1":
+        return reference_kv_cache_update(K_cache, V_cache, k_new, v_new, pos_arr)
     if backend_name == "reference":
         return reference_kv_cache_update(K_cache, V_cache, k_new, v_new, pos_arr)
     if backend_name != "metal":

@@ -86,6 +86,8 @@ def apply_rope(
     backend_name = backend.lower()
     if backend_name == "auto":
         backend_name = "metal"
+    if os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1":
+        return reference_apply_rope(x, cos, sin, position_offset=position_offset)
     if backend_name == "reference":
         return reference_apply_rope(x, cos, sin, position_offset=position_offset)
     if backend_name != "metal":

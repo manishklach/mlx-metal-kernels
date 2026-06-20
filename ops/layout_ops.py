@@ -81,6 +81,8 @@ def qkv_split(qkv: mx.array, H: int | None = None, D: int | None = None, *, back
     backend_name = backend.lower()
     if backend_name == "auto":
         backend_name = "metal"
+    if os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1":
+        return reference_qkv_split(qkv, H=H_val, D=D_val)
     if backend_name == "reference":
         return reference_qkv_split(qkv, H=H_val, D=D_val)
     if backend_name != "metal":
@@ -154,6 +156,8 @@ def qkv_split_rope(
     backend_name = backend.lower()
     if backend_name == "auto":
         backend_name = "metal"
+    if os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1":
+        return reference_qkv_split_rope(qkv, cos, sin, H=H_val, D=D_val, position_offset=position_offset)
     if backend_name == "reference":
         return reference_qkv_split_rope(qkv, cos, sin, H=H_val, D=D_val, position_offset=position_offset)
     if backend_name != "metal":

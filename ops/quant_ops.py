@@ -230,6 +230,8 @@ def dequant_q4(
     backend_name = backend.lower()
     if backend_name == "auto":
         backend_name = "metal"
+    if _ci_safe_mode_enabled():
+        return reference_dequant_q4(packed, scales, zeros, group_size=group_size, out_dtype=out_dtype)
     if backend_name == "reference":
         return reference_dequant_q4(packed, scales, zeros, group_size=group_size, out_dtype=out_dtype)
     if backend_name != "metal":
@@ -291,6 +293,8 @@ def dequant_q8(
     backend_name = backend.lower()
     if backend_name == "auto":
         backend_name = "metal"
+    if _ci_safe_mode_enabled():
+        return reference_dequant_q8(q, scales, zeros, group_size=group_size, out_dtype=out_dtype)
     if backend_name == "reference":
         return reference_dequant_q8(q, scales, zeros, group_size=group_size, out_dtype=out_dtype)
     if backend_name != "metal":

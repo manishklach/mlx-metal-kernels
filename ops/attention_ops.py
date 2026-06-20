@@ -361,6 +361,8 @@ def fast_attention(
         else:
             backend_name = "baseline"
 
+    if os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1":
+        return reference_attention(Q, K, V, scale=scale, causal=causal)
     if backend_name == "reference":
         return reference_attention(Q, K, V, scale=scale, causal=causal)
     if backend_name == "baseline":

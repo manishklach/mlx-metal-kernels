@@ -122,6 +122,8 @@ def qkv_rope_cache_update(
     backend_name = backend.lower()
     if backend_name == "auto":
         backend_name = "metal"
+    if os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1":
+        return reference_qkv_rope_cache_update(qkv, K_cache, V_cache, cos, sin, pos_arr, H=H_val, D=D_val)
     if backend_name == "reference":
         return reference_qkv_rope_cache_update(qkv, K_cache, V_cache, cos, sin, pos_arr, H=H_val, D=D_val)
     if backend_name != "metal":
@@ -157,6 +159,8 @@ def residual_add(x: mx.array, residual: mx.array, *, backend: str = "auto") -> m
     backend_name = backend.lower()
     if backend_name == "auto":
         backend_name = "metal"
+    if os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1":
+        return reference_residual_add(x, residual)
     if backend_name == "reference":
         return reference_residual_add(x, residual)
     if backend_name != "metal":
@@ -211,6 +215,8 @@ def rmsnorm_residual(
     backend_name = backend.lower()
     if backend_name == "auto":
         backend_name = "metal"
+    if os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1":
+        return reference_rmsnorm_residual(x, residual, weight, eps=eps, return_residual=return_residual)
     if backend_name == "reference":
         return reference_rmsnorm_residual(x, residual, weight, eps=eps, return_residual=return_residual)
     if backend_name != "metal":

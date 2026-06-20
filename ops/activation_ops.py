@@ -92,6 +92,8 @@ def swiglu(gate: mx.array, up: mx.array, *, backend: str = "auto") -> mx.array:
     backend_name = backend.lower()
     if backend_name == "auto":
         backend_name = "metal"
+    if os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1":
+        return reference_swiglu(gate, up)
     if backend_name == "reference":
         return reference_swiglu(gate, up)
     if backend_name != "metal":
@@ -116,6 +118,12 @@ def fused_swiglu(gate: mx.array, up: mx.array, *, backend: str = "metal_fused") 
     backend_name = backend.lower()
     if backend_name == "auto":
         backend_name = "metal_fused"
+    if os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1":
+        gate_f32 = gate2d.astype(mx.float32)
+        up_f32 = up2d.astype(mx.float32)
+        silu = gate_f32 / (1.0 + mx.exp(-gate_f32))
+        out2d = (silu * up_f32).astype(gate2d.dtype)
+        return _restore_fused_output(out2d, original_shape)
     if backend_name == "reference":
         gate_f32 = gate2d.astype(mx.float32)
         up_f32 = up2d.astype(mx.float32)

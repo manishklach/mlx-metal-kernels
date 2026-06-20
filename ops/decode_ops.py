@@ -40,6 +40,8 @@ def _get_kernel(kernel_name: str, dtype_name: str, source: str, header: str):
 
 def _resolve_backend(backend_name: str, D: int) -> str:
     if backend_name == "auto":
+        if os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1":
+            return "reference"
         if os.environ.get("MLX_METAL_USE_THREADGROUP_ATTENTION", "0") == "1":
             return "metal_threadgroup"
         if os.environ.get("MLX_METAL_USE_SPECIALIZED", "0") == "1":

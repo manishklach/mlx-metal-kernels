@@ -79,6 +79,8 @@ def _get_named_paged_decode_kernel(kernel_name: str, dtype_name: str, source: st
 
 def _resolve_backend(backend_name: str, D: int) -> str:
     if backend_name == "auto":
+        if os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1":
+            return "reference"
         if os.environ.get("MLX_METAL_USE_THREADGROUP_ATTENTION", "0") == "1":
             return "metal_threadgroup"
         if os.environ.get("MLX_METAL_USE_SPECIALIZED", "0") == "1":
@@ -159,6 +161,8 @@ def block_table_lookup(block_table: mx.array, positions, PAGE_SIZE: int, *, back
     backend_name = backend.lower()
     if backend_name == "auto":
         backend_name = "metal"
+    if os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1":
+        return reference_block_table_lookup(block_table, positions_arr, PAGE_SIZE)
     if backend_name == "reference":
         return reference_block_table_lookup(block_table, positions_arr, PAGE_SIZE)
     if backend_name != "metal":
@@ -229,6 +233,8 @@ def paged_kv_cache_update(
     backend_name = backend.lower()
     if backend_name == "auto":
         backend_name = "metal"
+    if os.environ.get("MLX_METAL_CI_SAFE_MODE", "0") == "1":
+        return reference_paged_kv_cache_update(K_pages, V_pages, k_new, v_new, block_table, positions_arr)
     if backend_name == "reference":
         return reference_paged_kv_cache_update(K_pages, V_pages, k_new, v_new, block_table, positions_arr)
     if backend_name != "metal":
