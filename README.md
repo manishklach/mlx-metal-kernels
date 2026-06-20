@@ -153,6 +153,20 @@ Current capabilities include:
 
 Stable defaults remain conservative. Experimental backends such as threadgroup, tiled, specialized, and simdgroup kernels are explicit-only unless enabled through documented flags or autotuning.
 
+## Results
+
+No verified benchmark numbers are published from this checkout yet.
+
+The local evidence file [`docs/performance_report_local.md`](docs/performance_report_local.md) records the exact commands attempted during the 2026-06-20 audit and why that run stopped before correctness or benchmark data could be produced. This workspace was audited on Windows 11, and `pip install mlx --break-system-packages` failed with `No matching distribution found for mlx`, so `pytest tests -q`, `python examples/run_basic.py`, the full benchmark suite, and autotune did not complete.
+
+Until an Apple Silicon machine completes the commands below and produces raw JSON/CSV artifacts, this README intentionally does not publish a headline results table.
+
+```bash
+python benchmarks/run_all_benchmarks.py --full --output benchmarks/results/local_results.json --csv benchmarks/results/local_results.csv
+python scripts/save_benchmark_report.py benchmarks/results/local_results.json --output docs/performance_report_local.md
+python benchmarks/autotune.py --op all --quick --dtype float16 --write-cache
+```
+
 ## Install
 
 ```bash

@@ -8,6 +8,8 @@ pip install -e .
 pytest tests -q
 ```
 
+`mlx` is Apple Silicon specific in practice for this repo's intended workflow. If install or import fails, stop before benchmarking and record the environment blocker rather than publishing unverified numbers.
+
 ## How to add a new backend
 
 1. **Reference path first** — implement a pure-MLX version of the op in the appropriate `ops/` module.
@@ -16,6 +18,13 @@ pytest tests -q
 4. **Test the new backend** — extend the correctness test to include the new backend.
 5. **Benchmark** — add or extend a benchmark in `benchmarks/` and run it locally.
 6. **Update docs** — update README and any relevant docs.
+
+## Publishing results
+
+- Do not add benchmark numbers to `README.md` until `pytest tests -q` passes on the same machine.
+- Keep the exact benchmark command next to every published claim.
+- Commit the generated JSON/CSV artifacts under `benchmarks/results/` only when they come from a real local run you intend to preserve.
+- Update `docs/performance_report_local.md` with machine metadata, methodology, and links to the raw artifacts.
 
 ## Code style
 

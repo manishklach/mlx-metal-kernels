@@ -8,6 +8,9 @@ on:
 
 jobs:
   test:
+    # CI provides macOS regression coverage for install/tests.
+    # Benchmark numbers, autotune artifacts, and any performance claims remain
+    # machine-local evidence and should not be inferred from this workflow.
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
