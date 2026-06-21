@@ -120,6 +120,11 @@ BACKEND_REGISTRY = {
         "reference_backend": "reference",
         "candidate_backends": ["in_memory"],
     },
+    "speculative_decoding": {
+        "function": "models.speculative_decoding.SpeculativeGenerator.generate_ids",
+        "reference_backend": "reference",
+        "candidate_backends": ["fixed_draft", "random_draft"],
+    },
 }
 
 

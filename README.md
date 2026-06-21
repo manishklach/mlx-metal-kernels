@@ -108,6 +108,17 @@ Performance claims should only be made from benchmark data generated on a specif
 - Model-adapter scaffold
 - GQA/MQA utilities
 
+### Speculative decoding / MTP
+
+- SpeculativeConfig, DraftProposal, VerificationResult, SpeculativeGenerationResult
+- FixedDraftProposer, RandomDraftProposer, GreedySelfDraftProposer
+- PipelineTargetVerifier (sequential greedy verification)
+- SpeculativeGenerator (propose → verify → accept/reject → commit)
+- Accept/reject helpers: compute_accept_mask, verify_draft_tokens
+- Cache commit/rollback ops: commit_accepted_cache, discard_suffix
+- Synthetic MTP scaffold: MTPConfig, SyntheticMTPHead, mtp_propose_tokens
+- Pipeline integration via generate_speculative() (opt-in, existing generate() unchanged)
+
 ### Benchmarking and autotuning
 
 - Unified benchmark runner

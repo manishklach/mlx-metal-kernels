@@ -761,6 +761,59 @@ def _prefix_cache_reuse_cases(results, dtype, dtype_name, quick, iters, fail_fas
         )
 
 
+def _speculative_decoding_cases(results, dtype, dtype_name, quick, iters, fail_fast):
+    if quick:
+        shapes = [{"prompt_tokens": 4, "max_new_tokens": 4, "draft_length": 2}]
+    else:
+        shapes = [
+            {"prompt_tokens": 4, "max_new_tokens": 8, "draft_length": 2},
+            {"prompt_tokens": 8, "max_new_tokens": 16, "draft_length": 4},
+        ]
+    for shape in shapes:
+        from models.tiny_generation_pipeline import TinyGenerationPipeline, TinyGenerationPipelineConfig
+        from models.speculative_decoding import FixedDraftProposer, SpeculativeConfig, SpeculativeGenerator
+
+        pipe_cfg = TinyGenerationPipelineConfig(
+            hidden_size=32, intermediate_size=64,
+            num_attention_heads=2, num_key_value_heads=1,
+            head_dim=16, num_hidden_layers=1,
+            max_position_embeddings=max(shape["prompt_tokens"] + shape["max_new_tokens"] + 8, 32),
+            vocab_size=64, bits=4, group_size=32,
+            backend_preset="reference",
+        ).validate()
+        pipeline = TinyGenerationPipeline(config=pipe_cfg)
+        prompt_ids = list(range(shape["prompt_tokens"]))
+        spec_cfg = SpeculativeConfig(
+            draft_length=shape["draft_length"],
+            max_new_tokens=shape["max_new_tokens"],
+            temperature=1.0,
+            greedy_verify=True,
+            seed=0,
+            backend_preset="reference",
+        ).validate()
+        for draft_mode in ("fixed", "random"):
+            if draft_mode == "fixed":
+                proposer = FixedDraftProposer(list(range(pipeline.vocab_size))[:shape["draft_length"]])
+            else:
+                from models.speculative_decoding import RandomDraftProposer
+                proposer = RandomDraftProposer(pipeline.vocab_size, seed=0)
+            gen = SpeculativeGenerator(pipeline, draft_proposer=proposer, config=spec_cfg)
+            _run(
+                results,
+                "speculative_decoding",
+                f"generate_ids_{draft_mode}",
+                "reference",
+                dtype_name,
+                shape,
+                lambda g=gen, ids=prompt_ids, sc=spec_cfg: time_fn(
+                    lambda: g.generate_ids(ids, speculative_config=sc),
+                    warmup=1,
+                    iters=iters,
+                ),
+                fail_fast,
+            )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick", action="store_true")
@@ -804,6 +857,7 @@ def main():
     _llama_stack_prefill_cases(results, dtype, args.dtype, quick, iters, args.fail_fast, args.use_autotune)
     _tiny_generation_pipeline_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _prefix_cache_reuse_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
+    _speculative_decoding_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
 
     payload = {
         "system_info": collect_system_info(),

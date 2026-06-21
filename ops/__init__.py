@@ -47,6 +47,10 @@ from .kv_cache_reuse_ops import (
     copy_prefix_cache_into,
     slice_layer_cache,
 )
+from .speculative_cache_ops import (
+    commit_accepted_cache,
+    discard_suffix,
+)
 from .layout_ops import qkv_split, qkv_split_rope, reference_qkv_split, reference_qkv_split_rope
 from .llama_layer_ops import (
     LlamaLayerBackendConfig,
@@ -151,6 +155,8 @@ from .toy_transformer_ops import (
 )
 
 __all__ = [
+    "commit_accepted_cache",
+    "discard_suffix",
     "apply_rope",
     "decode_attention",
     "decode_block_from_qkv",

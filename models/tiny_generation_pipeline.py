@@ -371,6 +371,56 @@ class TinyGenerationPipeline:
             prompt_length=len(token_ids),
         )
 
+    def generate_speculative(
+        self,
+        prompt: str,
+        *,
+        max_new_tokens: int | None = None,
+        temperature: float | None = None,
+        seed: int | None = None,
+        draft_length: int = 4,
+        draft_mode: str = "fixed",
+        greedy_verify: bool = True,
+        require_exact_match: bool = True,
+    ) -> SpeculativeGenerationResult:
+        from .speculative_decoding import (
+            FixedDraftProposer,
+            GreedySelfDraftProposer,
+            PipelineTargetVerifier,
+            RandomDraftProposer,
+            SpeculativeConfig,
+            SpeculativeGenerator,
+        )
+        spec_config = SpeculativeConfig(
+            draft_length=draft_length,
+            max_new_tokens=max_new_tokens or self.generation_config.max_new_tokens,
+            temperature=temperature or 1.0 if greedy_verify else (temperature or self.generation_config.temperature),
+            top_k=None if greedy_verify else self.generation_config.top_k,
+            top_p=None if greedy_verify else self.generation_config.top_p,
+            greedy_verify=greedy_verify,
+            require_exact_match=require_exact_match,
+            seed=seed,
+            backend_preset=self.config.backend_preset,
+            use_prefill=self.config.use_prefill,
+            cache_layout=self.config.cache_layout,
+        ).validate()
+        if draft_mode == "fixed":
+            proposer = FixedDraftProposer(list(range(self.vocab_size))[:draft_length])
+        elif draft_mode == "random":
+            proposer = RandomDraftProposer(self.vocab_size, seed=seed or 0)
+        elif draft_mode == "self":
+            proposer = GreedySelfDraftProposer(self)
+        else:
+            raise ValueError(f"Unknown draft_mode: {draft_mode!r}")
+        verifier = PipelineTargetVerifier(self)
+        generator = SpeculativeGenerator(
+            self,
+            draft_proposer=proposer,
+            target_verifier=verifier,
+            config=spec_config,
+        )
+        return generator.generate_text(prompt, speculative_config=spec_config)
+
     def generate(
         self,
         prompt: str,

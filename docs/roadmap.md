@@ -40,7 +40,7 @@ This repo is evolving as an experimental Apple Silicon MLX/Metal kernel lab for 
 - [ ] Quantized package tensor-data writer
 - [x] Sparse and sliding-window GQA attention kernels
 - [x] Prefix KV-cache reuse and cache matching
-- [ ] Speculative decoding / MTP scaffold
+- [x] Speculative decoding / MTP scaffold
 - [ ] Flash/NAND KV offload tier
 - [ ] Quantized KV-cache attention
 
@@ -261,7 +261,20 @@ The intended workflow for each new primitive is:
 
 ### v0.38 speculative decoding / MTP scaffold
 
-- add a narrow speculative-decoding or multi-token-prediction scaffold
+- [x] `SpeculativeConfig`, `DraftProposal`, `VerificationResult`, `SpeculativeStepResult`, `SpeculativeGenerationResult`
+- [x] `FixedDraftProposer`, `RandomDraftProposer`, `GreedySelfDraftProposer` — three draft proposer implementations
+- [x] `PipelineTargetVerifier` — greedy target model verifier
+- [x] `SpeculativeGenerator` — generate_ids + generate_text with accept/reject loop
+- [x] `compute_accept_mask`, `accepted_prefix_length`, `verify_draft_tokens` — accept/reject helpers
+- [x] `SpeculativeGenerationResult.acceptance_rate()` and `tokens_per_step()` — metadata queries
+- [x] `ops/speculative_cache_ops.py` — `commit_accepted_cache`, `discard_suffix`
+- [x] `models/mtp.py` — `MTPConfig`, `SyntheticMTPHead`, `mtp_propose_tokens`
+- [x] Pipeline integration via `TinyGenerationPipeline.generate_speculative()`
+- [x] `generate_speculative` is opt-in; existing `generate()` unchanged
+- [x] B=1, contiguous cache first; paged speculative cache raises `NotImplementedError`
+- [x] Test coverage: accept/reject, proposers, verifier, generator, cache ops, MTP scaffold, pipeline speculative mode
+- [x] Benchmark scaffold and examples
+- [x] Documentation and roadmap update
 - keep model-quality and acceptance-rate claims out of scope until local validation exists
 
 ### v0.39 Flash/NAND KV offload tier
