@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -358,6 +357,7 @@ class SpeculativeGenerator:
         speculative_config: SpeculativeConfig | None = None,
     ) -> SpeculativeGenerationResult:
         config = (speculative_config or self.config).validate()
+        base_seed = config.seed
         input_ids = [int(tid) for tid in input_ids]
         if not input_ids:
             raise ValueError("input_ids must contain at least one token")
@@ -368,7 +368,8 @@ class SpeculativeGenerator:
         while total_new < config.max_new_tokens:
             remaining = config.max_new_tokens - total_new
             draft_k = min(config.draft_length, remaining)
-            proposal = self.draft_proposer.propose(all_ids, draft_k, seed=config.seed)
+            step_seed = None if base_seed is None else base_seed + step_index
+            proposal = self.draft_proposer.propose(all_ids, draft_k, seed=step_seed)
             if proposal.length() == 0:
                 break
             verification = self.target_verifier.verify(all_ids, proposal.token_ids, config=config)
@@ -389,17 +390,16 @@ class SpeculativeGenerator:
             step_index += 1
             if verification.rejected_count > 0 and verification.replacement_token_id is not None:
                 pass
-            if config.seed is not None:
-                config.seed += 1
         generated_ids = all_ids[len(input_ids):]
         text = None
         if hasattr(self.pipeline, "decode"):
             try:
-                text = self.pipeline.decode(generated_ids)
+                text = self.pipeline.decode(all_ids)
             except Exception:
                 text = None
         total_proposed = sum(s.proposal.length() for s in steps)
         total_accepted = sum(s.accepted_count for s in steps)
+        total_committed = sum(len(s.committed_token_ids) for s in steps)
         return SpeculativeGenerationResult(
             prompt=None,
             prompt_ids=input_ids,
@@ -414,7 +414,7 @@ class SpeculativeGenerator:
                 "total_proposed": total_proposed,
                 "total_accepted": total_accepted,
                 "acceptance_rate": float(total_accepted / total_proposed) if total_proposed > 0 else 0.0,
-                "avg_tokens_per_step": float((len(steps) - 1 + 1) / max(len(steps), 1)),
+                "avg_tokens_per_step": float(total_committed / len(steps)) if steps else 0.0,
             },
         )
 
@@ -426,9 +426,9 @@ class SpeculativeGenerator:
         input_ids = self.pipeline.encode(prompt)
         result = self.generate_ids(input_ids, speculative_config=speculative_config)
         result.prompt = prompt
-        if result.text is None:
+        if hasattr(self.pipeline, "decode"):
             try:
                 result.text = self.pipeline.decode(result.all_ids)
             except Exception:
-                result.text = None
+                pass
         return result

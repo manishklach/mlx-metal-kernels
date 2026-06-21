@@ -571,3 +571,18 @@ class TestSpeculativeGenerator:
         assert len(result.steps) > 0
         for step in result.steps:
             assert step.metadata["step_index"] >= 0
+
+    def test_generate_ids_does_not_mutate_config_seed(self):
+        pipeline = _DummyPipeline()
+        proposer = RandomDraftProposer(128, seed=7)
+        cfg = SpeculativeConfig(draft_length=2, max_new_tokens=4, seed=11)
+        gen = SpeculativeGenerator(pipeline, draft_proposer=proposer, config=cfg)
+        _ = gen.generate_ids([1, 2], speculative_config=cfg)
+        assert cfg.seed == 11
+
+    def test_metadata_avg_tokens_per_step_matches_result(self):
+        pipeline = _DummyPipeline()
+        proposer = FixedDraftProposer([42, 43, 44, 45])
+        gen = SpeculativeGenerator(pipeline, draft_proposer=proposer)
+        result = gen.generate_ids([1, 2], speculative_config=SpeculativeConfig(max_new_tokens=4))
+        assert result.metadata["avg_tokens_per_step"] == result.tokens_per_step()

@@ -111,6 +111,7 @@ class TestSpeculativeFullFlow:
         gen = SpeculativeGenerator(pipeline, draft_proposer=proposer)
         result = gen.generate_text("hello world")
         assert result.prompt == "hello world"
+        assert result.text == pipeline.decode(result.all_ids)
 
     def test_acceptance_bounds(self):
         pipeline = _DummyPipeline()
