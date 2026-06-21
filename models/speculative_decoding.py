@@ -354,7 +354,6 @@ class ParallelTargetVerifier(TargetVerifier):
                 vcfg.backend_preset = config.backend_preset
         vcfg = vcfg.validate()
 
-        pipeline_state = None
         stack_cache = None
         position = 0
 
@@ -363,23 +362,33 @@ class ParallelTargetVerifier(TargetVerifier):
             stack_cache = pipeline_state.cache
             position = pipeline_state.position
 
-        if stack_cache is None and hasattr(self.pipeline, "model"):
-            embed_test = self.pipeline.model.embed_token_ids([0])
-            if _is_mlx_array(embed_test):
-                cos, sin = self.pipeline.model._get_rope_tables(128)
-            else:
-                from models.llama_config import build_rope_tables
-                try:
-                    cos, sin = build_rope_tables(self.pipeline.llama_config, seq_len=128)
-                except Exception:
-                    cos, sin = None, None
-        else:
-            cos, sin = None, None
+        if stack_cache is None:
+            self.pipeline.reset_cache()
+            if context_ids and len(context_ids) > 0:
+                self.pipeline.prefill_prompt(list(context_ids), state=self.pipeline._state)
+            if self.pipeline._state is not None:
+                stack_cache = self.pipeline._state.cache
+                position = self.pipeline._state.position
+
+        cos, sin = None, None
+        if hasattr(self.pipeline, "model"):
+            from models.llama_config import build_rope_tables
+            try:
+                cos, sin = build_rope_tables(self.pipeline.llama_config, seq_len=128)
+            except Exception:
+                pass
 
         result = parallel_verify_tokens(
             context_token_ids=list(context_ids),
             proposed_token_ids=list(proposed_token_ids),
-            pipeline=self.pipeline,
+            stack_cache=stack_cache,
+            position=position,
+            model_config=self.pipeline.llama_config,
+            stack_weights=self.pipeline.stack_weights,
+            embedding=self.pipeline.model.embedding,
+            lm_head=self.pipeline.model.lm_head,
+            cos=cos,
+            sin=sin,
             verification_config=vcfg,
         )
         vr = result.to_verification_result(require_exact_match=True)
