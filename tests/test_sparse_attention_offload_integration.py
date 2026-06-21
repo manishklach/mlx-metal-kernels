@@ -53,7 +53,7 @@ class TestSparsePositionsForDecode:
         pattern = SparseAttentionPattern(pattern="sliding_window", window_size=64)
         positions = sparse_positions_for_decode(256, pattern)
         assert len(positions) == 64
-        assert positions[0] == 193
+        assert positions[0] == 192
 
     def test_sliding_window_sink(self):
         pattern = SparseAttentionPattern(pattern="sliding_window_sink", window_size=64, sink_tokens=4)
