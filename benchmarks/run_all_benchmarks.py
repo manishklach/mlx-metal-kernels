@@ -1099,6 +1099,40 @@ def _kv_prefetch_scheduler_cases(results, dtype, dtype_name, quick, iters, fail_
             _run(results, "kv_prefetch_scheduler", f"scheduler_{backend}", backend, dtype_name, shape, time_fn(make_fn(), warmup=1, iters=iters), fail_fast)
 
 
+def _paged_quantized_kv_decode_cases(results, dtype, dtype_name, quick, iters, fail_fast):
+    if quick:
+        shapes = [{"bits": 8, "B": 1, "MAX_S": 32, "length": 32, "PAGE_SIZE": 8, "Hq": 4, "Hkv": 2, "D": 16, "group_size": 16}]
+    else:
+        shapes = [
+            {"bits": 8, "B": 1, "MAX_S": 4096, "length": 4096, "PAGE_SIZE": 16, "Hq": 32, "Hkv": 8, "D": 128, "group_size": 32},
+            {"bits": 4, "B": 1, "MAX_S": 4096, "length": 4096, "PAGE_SIZE": 16, "Hq": 32, "Hkv": 8, "D": 128, "group_size": 32},
+        ]
+    backends = ["reference", "metal_q8", "metal_q4"]
+    for shape in shapes:
+        B, MAX_S, length, PAGE_SIZE, Hq, Hkv, D = shape["B"], shape["MAX_S"], shape["length"], shape["PAGE_SIZE"], shape["Hq"], shape["Hkv"], shape["D"]
+        bits, group_size = shape["bits"], shape["group_size"]
+        q = mx.random.normal((B, 1, Hq, D)).astype(dtype)
+        K_cache = mx.random.normal((B, MAX_S, Hkv, D)).astype(dtype)
+        V_cache = mx.random.normal((B, MAX_S, Hkv, D)).astype(dtype)
+        K_pages, V_pages, block_table, lengths_arr = contiguous_kv_to_pages(K_cache, V_cache, [length] * B, page_size=PAGE_SIZE)
+        pqv = quantize_kv_pages(K_pages, V_pages, block_table, lengths_arr, PagedQuantizedKVConfig(bits=bits, page_size=PAGE_SIZE, group_size=group_size))
+        for backend in backends:
+            if backend == "metal_q8" and bits != 8:
+                _skip(results, "paged_quantized_kv_decode_attention", f"paged_q{bits}_decode_attention", backend, dtype_name, shape, "bits mismatch")
+                continue
+            if backend == "metal_q4" and bits != 4:
+                _skip(results, "paged_quantized_kv_decode_attention", f"paged_q{bits}_decode_attention", backend, dtype_name, shape, "bits mismatch")
+                continue
+            if D > 128 and backend != "reference":
+                _skip(results, "paged_quantized_kv_decode_attention", f"paged_q{bits}_decode_attention", backend, dtype_name, shape, "D > 128 not supported")
+                continue
+            _run(results, "paged_quantized_kv_decode_attention", f"paged_q{bits}_decode_attention", backend, dtype_name, shape,
+                 lambda b=backend, qq=q, ppqv=pqv: time_fn(
+                     lambda: paged_quantized_kv_gqa_decode_attention(qq, ppqv, backend=b),
+                     warmup=3, iters=iters,
+                 ), fail_fast)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick", action="store_true")
@@ -1148,6 +1182,7 @@ def main():
     _speculative_decoding_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _parallel_speculative_verify_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _kv_prefetch_scheduler_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
+    _paged_quantized_kv_decode_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
 
     payload = {
         "system_info": collect_system_info(),

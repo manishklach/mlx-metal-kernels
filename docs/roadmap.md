@@ -361,12 +361,22 @@ The intended workflow for each new primitive is:
 - [x] Documentation: `docs/async_kv_prefetch_scheduler.md`
 - keep production async IO, DMA, and SSD streaming claims out of scope
 
-### v0.44
+### v0.44 Paged quantized KV-cache
 
-- True batched prefill verification (continuation prefill with `start_position > 0`)
-- Paged staged KV‑cache support
-- B>1 support in parallel verification
-- Paged quantized KV-cache
+- [x] PagedQuantizedKVConfig with validation (bits 4/8, page_size, group_size, symmetric, paged layout)
+- [x] PagedQuantizedKVCache dataclass with shapes/validate/num_pages/memory_bytes/compression_ratio
+- [x] quantize_kv_pages for q8 and q4 (per-page/token/head/group symmetric quantization)
+- [x] dequantize_kv_pages roundtrip
+- [x] paged_quantized_kv_error metrics (RMSE, max abs, compression ratio)
+- [x] contiguous_kv_to_pages and pages_to_contiguous_kv conversion helpers
+- [x] reference_paged_quantized_kv_gqa_decode_attention — dequantize + GQA paged decode
+- [x] paged_quantized_kv_gqa_decode_attention with "reference", "metal_q8", "metal_q4" backends
+- [x] Metal q8 paged GQA decode attention kernel (block_table lookup + per-group dequant)
+- [x] Metal q4 paged GQA decode attention kernel (nibble unpack + per-group dequant)
+- [x] reference_sparse_paged_quantized_kv_gqa_decode_attention — sparse + paged + quantized reference
+- [x] Test coverage: quantization ops (15+), reference decode (6), Metal decode (6+), memory (5)
+- [x] Benchmark scaffold and examples
+- [x] Documentation and roadmap update
 
 ### v0.45
 

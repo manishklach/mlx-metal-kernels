@@ -69,6 +69,17 @@ from .kv_prefetch_ops import (
     prefetch_blocks_for_sparse_decode,
     prefetch_blocks_for_speculative_draft,
 )
+from .paged_quantized_kv_ops import (
+    PagedQuantizedKVConfig,
+    PagedQuantizedKVCache,
+    contiguous_kv_to_pages,
+    dequantize_kv_pages,
+    pages_to_contiguous_kv,
+    paged_quantized_kv_error,
+    paged_quantized_kv_gqa_decode_attention,
+    quantize_kv_pages,
+    reference_paged_quantized_kv_gqa_decode_attention,
+)
 from .speculative_verify_ops import (
     ParallelVerificationConfig,
     ParallelVerificationPassResult,
@@ -220,6 +231,15 @@ __all__ = [
     "prefetch_blocks_for_sparse_decode",
     "prefetch_blocks_for_speculative_draft",
     "ensure_prefetched_before_attention",
+    "PagedQuantizedKVConfig",
+    "PagedQuantizedKVCache",
+    "contiguous_kv_to_pages",
+    "dequantize_kv_pages",
+    "pages_to_contiguous_kv",
+    "paged_quantized_kv_error",
+    "paged_quantized_kv_gqa_decode_attention",
+    "quantize_kv_pages",
+    "reference_paged_quantized_kv_gqa_decode_attention",
     "clone_residency_map",
     "apply_rope",
     "decode_attention",

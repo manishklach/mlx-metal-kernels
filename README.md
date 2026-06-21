@@ -215,6 +215,33 @@ python benchmarks/bench_quantized_kv_decode_attention.py --bits 8 --B 1 --MAX_S 
 python benchmarks/bench_quantized_kv_decode_attention.py --bits 4 --B 1 --MAX_S 4096 --length 4096 --Hq 32 --Hkv 8 --D 128 --group-size 32 --backend all --validate --compare-fp16
 ```
 
+### Paged quantized KV-cache
+
+The repo includes experimental q8/q4 paged KV-cache decode attention. K/V pages can be stored in quantized form with per-page/token/head/group scales, and paged GQA/MQA decode attention dequantizes values while following the block table.
+
+Current scope:
+
+* q8 paged KV quantization
+* q4 packed paged KV quantization
+* reference paged quantized GQA decode attention
+* experimental Metal q8/q4 paged decode kernels
+* memory/compression accounting
+* benchmarks
+
+Out of scope:
+
+* production paged cache allocator
+* automatic runtime routing
+* paged sparse quantized Metal backend unless implemented
+* model-quality claims
+
+Commands:
+```
+python examples/paged_quantized_kv_demo.py
+python benchmarks/bench_paged_quantized_kv_decode.py --bits 8 --B 1 --MAX_S 4096 --length 4096 --PAGE_SIZE 16 --Hq 32 --Hkv 8 --D 128 --group-size 32 --backend all --validate --compare-fp16
+python benchmarks/bench_paged_quantized_kv_decode.py --bits 4 --B 1 --MAX_S 4096 --length 4096 --PAGE_SIZE 16 --Hq 32 --Hkv 8 --D 128 --group-size 32 --backend all --validate --compare-fp16
+```
+
 ### Long-context runtime integration
 
 The repo includes an experimental long-context runtime scaffold that combines prefix KV-cache reuse, sparse attention planning, KV offload/prefetch, and optional quantized-KV metadata into one explicit path.

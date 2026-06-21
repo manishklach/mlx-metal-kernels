@@ -153,6 +153,14 @@ BACKEND_REGISTRY = {
         "reference_backend": "scheduled",
         "candidate_backends": ["synchronous", "scheduled"],
     },
+    "paged_quantized_kv_decode_attention": {
+        "function": "ops.paged_quantized_kv_ops.paged_quantized_kv_gqa_decode_attention",
+        "reference_backend": "reference",
+        "candidate_backends": [
+            "metal_q8",
+            "metal_q4",
+        ],
+    },
 }
 
 
@@ -289,6 +297,19 @@ def filter_backends_for_shape(op_name: str, shape: dict, dtype, backends) -> lis
             if backend == "metal_q4" and bits not in (None, 4):
                 continue
             if backend != "reference" and dim is not None and dim > 128:
+                continue
+        if op_name == "paged_quantized_kv_decode_attention":
+            bits = shape.get("bits")
+            hq = shape.get("Hq")
+            hkv = shape.get("Hkv")
+            d = shape.get("D")
+            if backend not in ("reference",) and (hq is None or hkv is None or hq < hkv or hq % hkv != 0):
+                continue
+            if backend == "metal_q8" and bits not in (None, 8):
+                continue
+            if backend == "metal_q4" and bits not in (None, 4):
+                continue
+            if backend != "reference" and d is not None and d > 128:
                 continue
         if backend == "simdgroup_d64":
             if dim != 64:
