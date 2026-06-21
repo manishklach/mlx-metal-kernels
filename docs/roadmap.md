@@ -45,6 +45,7 @@ This repo is evolving as an experimental Apple Silicon MLX/Metal kernel lab for 
 - [x] Quantized KV-cache attention
 - [x] Sparse + prefix-cache + offload integration
 - [x] Parallel speculative verification (staged decode‑loop)
+- [x] Async KV prefetch scheduler
 
 ## Development pattern
 
@@ -345,26 +346,40 @@ The intended workflow for each new primitive is:
 - [x] Documentation: `docs/parallel_speculative_verification.md`
 - keep model‑quality and acceptance‑rate claims out of scope until local validation exists
 
-### v0.43
+### v0.43 Async KV prefetch scheduler
+
+- [x] `KVPrefetchRequest`, `KVPrefetchRequestId`, `KVPrefetchResult`, `KVPrefetchSchedulerStats` — scheduler dataclasses
+- [x] `KVPrefetchSchedulerConfig` — config with mode, max_in_flight, simulated_latency_steps, priority, dedup
+- [x] `KVPrefetchScheduler` — deterministic step-based scheduler with submit/advance/poll/wait/cancel
+- [x] `models/kv_prefetch_scheduler.py` — scheduler implementation
+- [x] `ops/kv_prefetch_ops.py` — `prefetch_blocks_for_sparse_decode`, `prefetch_blocks_for_speculative_draft`, `ensure_prefetched_before_attention`
+- [x] Long-context runtime integration: `LongContextRuntimeConfig.use_prefetch_scheduler`, `LongContextRuntimeState.prefetch_scheduler`, `long_context_decode_step` prefetch path
+- [x] Event/report integration: `prefetch_submitted`, `prefetch_complete`, `prefetch_failed`, `scheduler_step` events and report fields
+- [x] Tests: scheduler (config, submit, advance, wait, stats, cancel), prefetch ops (sparse decode, speculative draft, ensure), long-context integration
+- [x] Benchmark: `benchmarks/bench_kv_prefetch_scheduler.py` with sequential decode positions
+- [x] Example demo: `examples/kv_prefetch_scheduler_demo.py`
+- [x] Documentation: `docs/async_kv_prefetch_scheduler.md`
+- keep production async IO, DMA, and SSD streaming claims out of scope
+
+### v0.44
 
 - True batched prefill verification (continuation prefill with `start_position > 0`)
 - Paged staged KV‑cache support
 - B>1 support in parallel verification
-
-### v0.44
-
-- Async KV prefetch scheduler
 - Paged quantized KV-cache
 
 ### v0.45
 
 - Speculative decoding with real model weights
 - Acceptance‑rate tuning and validation
+- Real package tensor-data loader
 
 ### v0.46
 
 - Multi‑draft verification (multiple candidate sequences per step)
 - Verification‑based acceptance‑rate benchmarks on real hardware
+- Metal accept-mask and cache-commit kernels
+- mmap-backed KV offload
 
 ## Long-term goal
 

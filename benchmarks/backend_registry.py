@@ -148,6 +148,11 @@ BACKEND_REGISTRY = {
         "reference_backend": "reference",
         "candidate_backends": ["sequential", "parallel"],
     },
+    "kv_prefetch_scheduler": {
+        "function": "ops.kv_prefetch_ops.prefetch_blocks_for_sparse_decode",
+        "reference_backend": "scheduled",
+        "candidate_backends": ["synchronous", "scheduled"],
+    },
 }
 
 

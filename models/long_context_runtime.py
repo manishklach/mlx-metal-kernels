@@ -68,6 +68,9 @@ class LongContextRuntimeConfig:
     use_sparse_attention: bool = True
     use_kv_offload: bool = True
     use_quantized_kv: bool = False
+    use_prefetch_scheduler: bool = False
+    prefetch_lookahead_tokens: int = 1
+    prefetch_scheduler_config: Any | None = None
 
     sparse_pattern: Any | None = None
     offload_policy: Any | None = None
@@ -102,6 +105,10 @@ class LongContextRuntimeConfig:
             raise NotImplementedError("paged cache + quantized kv is not implemented")
         if self.use_quantized_kv and self.use_sparse_attention:
             pass
+        if self.use_prefetch_scheduler and not self.use_kv_offload:
+            raise ValueError("use_prefetch_scheduler requires use_kv_offload=True")
+        if self.prefetch_lookahead_tokens < 0:
+            raise ValueError(f"prefetch_lookahead_tokens must be >= 0, got {self.prefetch_lookahead_tokens}")
         return self
 
     def to_dict(self) -> dict[str, Any]:
@@ -110,6 +117,8 @@ class LongContextRuntimeConfig:
             "use_sparse_attention": self.use_sparse_attention,
             "use_kv_offload": self.use_kv_offload,
             "use_quantized_kv": self.use_quantized_kv,
+            "use_prefetch_scheduler": self.use_prefetch_scheduler,
+            "prefetch_lookahead_tokens": self.prefetch_lookahead_tokens,
             "backend_preset": self.backend_preset,
             "attention_backend": self.attention_backend,
             "decode_attention_backend": self.decode_attention_backend,
@@ -146,6 +155,12 @@ _EVENT_KINDS = frozenset({
     "fallback",
     "warning",
     "error",
+    "prefetch_submitted",
+    "prefetch_in_flight",
+    "prefetch_complete",
+    "prefetch_failed",
+    "prefetch_wait",
+    "scheduler_step",
 })
 
 
@@ -161,6 +176,11 @@ class LongContextRuntimeReport:
     blocks_prefetched: int = 0
     blocks_offloaded: int = 0
     quantized_kv_enabled: bool = False
+    prefetch_requests_submitted: int = 0
+    prefetch_requests_completed: int = 0
+    prefetch_requests_failed: int = 0
+    scheduler_steps: int = 0
+    blocks_prefetched_by_scheduler: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def errors(self) -> list[LongContextEvent]:
@@ -180,6 +200,11 @@ class LongContextRuntimeReport:
             "blocks_prefetched": self.blocks_prefetched,
             "blocks_offloaded": self.blocks_offloaded,
             "quantized_kv_enabled": self.quantized_kv_enabled,
+            "prefetch_requests_submitted": self.prefetch_requests_submitted,
+            "prefetch_requests_completed": self.prefetch_requests_completed,
+            "prefetch_requests_failed": self.prefetch_requests_failed,
+            "scheduler_steps": self.scheduler_steps,
+            "blocks_prefetched_by_scheduler": self.blocks_prefetched_by_scheduler,
             "events": [{"kind": e.kind, "message": e.message, "metadata": dict(e.metadata)} for e in self.events],
             "metadata": dict(self.metadata),
         }
@@ -192,6 +217,8 @@ class LongContextRuntimeReport:
         lines.append(f"  prefix_cache_hit={self.prefix_cache_hit} matched={self.matched_prefix_length} suffix={self.suffix_length}")
         lines.append(f"  sparse_positions={self.sparse_positions_count}")
         lines.append(f"  blocks_needed={self.blocks_needed} prefetched={self.blocks_prefetched} offloaded={self.blocks_offloaded}")
+        lines.append(f"  prefetch_reqs: submitted={self.prefetch_requests_submitted} completed={self.prefetch_requests_completed} failed={self.prefetch_requests_failed}")
+        lines.append(f"  scheduler_steps={self.scheduler_steps} blocks_by_scheduler={self.blocks_prefetched_by_scheduler}")
         lines.append(f"  quantized_kv={self.quantized_kv_enabled}")
         lines.append(f"  events ({len(self.events)}):")
         for e in self.events:
@@ -208,6 +235,7 @@ class LongContextRuntimeState:
     residency_map: Any | None = None
     offload_store: Any | None = None
     quantized_kv_cache: Any | None = None
+    prefetch_scheduler: Any | None = None
     position: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -218,6 +246,7 @@ class LongContextRuntimeState:
             "has_residency_map": self.residency_map is not None,
             "has_offload_store": self.offload_store is not None,
             "has_quantized_kv_cache": self.quantized_kv_cache is not None,
+            "has_prefetch_scheduler": self.prefetch_scheduler is not None,
         }
         if self.prefix_cache is not None:
             desc["prefix_cache_size"] = self.prefix_cache.size
@@ -225,6 +254,8 @@ class LongContextRuntimeState:
             desc["residency"] = self.residency_map.summary()
         if self.offload_store is not None:
             desc["offload_store_stats"] = self.offload_store.stats()
+        if self.prefetch_scheduler is not None:
+            desc["prefetch_scheduler"] = self.prefetch_scheduler.stats_dict()
         desc["metadata"] = dict(self.metadata)
         return desc
 
@@ -288,12 +319,27 @@ def create_long_context_runtime_state(
     if runtime_config.use_quantized_kv:
         quantized_kv_cache = {"enabled": True, "config": runtime_config.quantized_kv_config, "data": None}
 
+    prefetch_scheduler: Any = None
+    if runtime_config.use_prefetch_scheduler and residency_map is not None and offload_store is not None:
+        from .kv_prefetch_scheduler import KVPrefetchScheduler, KVPrefetchSchedulerConfig
+        sched_config = runtime_config.prefetch_scheduler_config
+        if sched_config is None:
+            sched_config = KVPrefetchSchedulerConfig()
+        elif not isinstance(sched_config, KVPrefetchSchedulerConfig):
+            sched_config = KVPrefetchSchedulerConfig(**sched_config)
+        prefetch_scheduler = KVPrefetchScheduler(
+            store=offload_store,
+            residency_map=residency_map,
+            config=sched_config,
+        )
+
     return LongContextRuntimeState(
         stack_cache=stack_cache,
         prefix_cache=prefix_cache,
         residency_map=residency_map,
         offload_store=offload_store,
         quantized_kv_cache=quantized_kv_cache,
+        prefetch_scheduler=prefetch_scheduler,
         position=0,
     )
 
@@ -446,13 +492,61 @@ def long_context_decode_step(
         if runtime_config.use_kv_offload and state.residency_map is not None and state.offload_store is not None:
             policy = runtime_config.offload_policy or KVOffloadPolicyConfig().validate()
             num_layers = getattr(model_config, "num_hidden_layers", 1)
+
+            if runtime_config.use_prefetch_scheduler and state.prefetch_scheduler is not None:
+                lookahead = runtime_config.prefetch_lookahead_tokens
+                for layer_idx in range(num_layers):
+                    from ops.kv_prefetch_ops import prefetch_blocks_for_sparse_decode
+                    requests = prefetch_blocks_for_sparse_decode(
+                        scheduler=state.prefetch_scheduler,
+                        residency_map=state.residency_map,
+                        layer_idx=layer_idx,
+                        batch_idx=0,
+                        current_length=new_position,
+                        sparse_pattern=runtime_config.sparse_pattern,
+                        block_size=policy.block_size,
+                        lookahead_tokens=lookahead,
+                        priority=0,
+                    )
+                    if requests:
+                        report.prefetch_requests_submitted += len(requests)
+                        events.append(LongContextEvent(
+                            kind="prefetch_submitted",
+                            message=f"Submitted {len(requests)} prefetch requests for layer {layer_idx} (lookahead={lookahead})",
+                            metadata={"layer_idx": layer_idx, "count": len(requests), "lookahead": lookahead},
+                        ))
+
+                state.prefetch_scheduler.advance_step(layer_caches=state.stack_cache)
+                report.scheduler_steps += 1
+                events.append(LongContextEvent(
+                    kind="scheduler_step",
+                    message=f"Scheduler step {state.prefetch_scheduler.current_step}",
+                    metadata=state.prefetch_scheduler.stats_dict(),
+                ))
+
+                poll_results = state.prefetch_scheduler.poll_ready(layer_caches=state.stack_cache)
+                completed = [r for r in poll_results if r.ok]
+                failed = [r for r in poll_results if not r.ok]
+                if completed:
+                    report.prefetch_requests_completed += len(completed)
+                    report.blocks_prefetched_by_scheduler += len(completed)
+                    events.append(LongContextEvent(
+                        kind="prefetch_complete",
+                        message=f"{len(completed)} prefetch(s) completed",
+                        metadata={"count": len(completed)},
+                    ))
+                if failed:
+                    report.prefetch_requests_failed += len(failed)
+                    events.append(LongContextEvent(
+                        kind="prefetch_failed",
+                        message=f"{len(failed)} prefetch(s) failed",
+                        metadata={"count": len(failed)},
+                    ))
+
             for layer_idx in range(num_layers):
                 try:
                     from ops.long_context_ops import ensure_blocks_ready_for_attention
-                    if isinstance(state.stack_cache[layer_idx], tuple):
-                        layer_cache = state.stack_cache[layer_idx]
-                    else:
-                        layer_cache = state.stack_cache[layer_idx]
+                    layer_cache = state.stack_cache[layer_idx]
                     if isinstance(layer_cache, tuple):
                         updated_cache = ensure_blocks_ready_for_attention(
                             layer_idx=layer_idx,

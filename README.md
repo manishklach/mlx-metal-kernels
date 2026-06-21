@@ -130,6 +130,35 @@ Performance claims should only be made from benchmark data generated on a specif
 - Demo: `python examples/parallel_speculative_verify_demo.py`
 - **Current limitation**: verification runs as a staged decode loop rather than a true batched prefill, because continuation prefill (`start_position > 0`) is not yet implemented. See `docs/parallel_speculative_verification.md` for details.
 
+### Async KV prefetch scheduler
+
+The repo includes an experimental step-based KV prefetch scheduler for long-context offload experiments. It can queue KV block prefetch requests, simulate in-flight latency, prefetch sparse-attention blocks ahead of use, and report scheduler activity.
+
+Current scope:
+
+- prefetch request objects
+- deterministic step scheduler
+- in-flight/completed tracking
+- sparse decode lookahead planning
+- speculative draft lookahead planning
+- integration with long-context runtime reports
+- simulated latency benchmark
+
+Out of scope:
+
+- production async IO
+- DMA
+- real SSD streaming
+- automatic scheduling policy
+- kernel-level compute/IO overlap
+
+Commands:
+
+```
+python examples/kv_prefetch_scheduler_demo.py
+python benchmarks/bench_kv_prefetch_scheduler.py --seq-len 4096 --block-size 128 --num-layers 2 --num-kv-heads 8 --head-dim 128 --window-size 512 --sink-tokens 4 --lookahead-tokens 8 --max-in-flight 4 --simulated-latency-steps 2 --offload-ratio 0.75
+```
+
 ### Flash/NAND KV offload tier scaffold
 
 The repo includes an experimental KV-cache offload scaffold for long-context inference. It tracks hot/resident and cold/offloaded KV blocks, supports in-memory and local file-backed stores, and provides prefetch planning for sparse attention patterns.

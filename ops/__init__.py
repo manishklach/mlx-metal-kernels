@@ -64,6 +64,11 @@ from .speculative_cache_ops import (
     commit_accepted_cache,
     discard_suffix,
 )
+from .kv_prefetch_ops import (
+    ensure_prefetched_before_attention,
+    prefetch_blocks_for_sparse_decode,
+    prefetch_blocks_for_speculative_draft,
+)
 from .speculative_verify_ops import (
     ParallelVerificationConfig,
     ParallelVerificationPassResult,
@@ -212,6 +217,9 @@ __all__ = [
     "embed_proposed_tokens",
     "parallel_verify_tokens",
     "target_tokens_from_verification_logits",
+    "prefetch_blocks_for_sparse_decode",
+    "prefetch_blocks_for_speculative_draft",
+    "ensure_prefetched_before_attention",
     "clone_residency_map",
     "apply_rope",
     "decode_attention",

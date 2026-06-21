@@ -58,6 +58,14 @@ from .kv_offload_policy import (
     plan_prefetch_for_sparse_attention,
 )
 from .kv_offload_store import FileKVOffloadStore, InMemoryKVOffloadStore, KVOffloadStore
+from .kv_prefetch_scheduler import (
+    KVPrefetchRequest,
+    KVPrefetchRequestId,
+    KVPrefetchResult,
+    KVPrefetchScheduler,
+    KVPrefetchSchedulerConfig,
+    KVPrefetchSchedulerStats,
+)
 from .mtp import MTPConfig, SyntheticMTPHead, mtp_propose_tokens
 from .speculative_decoding import (
     DraftProposal,
@@ -344,6 +352,12 @@ __all__ = [
     "tensor_nbytes",
     "tensor_shape",
     "validate_tensor_file",
+    "KVPrefetchRequestId",
+    "KVPrefetchRequest",
+    "KVPrefetchResult",
+    "KVPrefetchSchedulerStats",
+    "KVPrefetchSchedulerConfig",
+    "KVPrefetchScheduler",
 ]
 
 if KernelBackendConfig is not None:

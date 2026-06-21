@@ -1031,6 +1031,74 @@ def _parallel_speculative_verify_cases(results, dtype, dtype_name, quick, iters,
             )
 
 
+def _kv_prefetch_scheduler_cases(results, dtype, dtype_name, quick, iters, fail_fast):
+    try:
+        from models.kv_prefetch_scheduler import KVPrefetchScheduler, KVPrefetchSchedulerConfig
+        from models.kv_offload import KVResidencyMap, KVBlockId, partition_sequence_into_blocks
+        from models.kv_offload_store import InMemoryKVOffloadStore
+        from ops.kv_prefetch_ops import prefetch_blocks_for_sparse_decode
+    except ImportError:
+        return
+
+    if quick:
+        shapes = [{"seq_len": 256, "block_size": 64, "window_size": 128, "lookahead_tokens": 2, "max_in_flight": 2, "simulated_latency_steps": 1, "num_layers": 1, "num_kv_heads": 2, "head_dim": 16}]
+    else:
+        shapes = [{"seq_len": 4096, "block_size": 128, "window_size": 512, "lookahead_tokens": 8, "max_in_flight": 4, "simulated_latency_steps": 2, "num_layers": 2, "num_kv_heads": 8, "head_dim": 128}]
+
+    for shape in shapes:
+        rmap = KVResidencyMap()
+        for layer_idx in range(shape["num_layers"]):
+            blocks = partition_sequence_into_blocks(
+                layer_idx=layer_idx, batch_idx=0, seq_len=shape["seq_len"],
+                block_size=shape["block_size"],
+                num_kv_heads=shape["num_kv_heads"], head_dim=shape["head_dim"], dtype="float16",
+            )
+            for meta in blocks:
+                rmap.add_block(meta)
+
+        store = InMemoryKVOffloadStore()
+        total = len(rmap.blocks)
+        for i, meta in enumerate(sorted(rmap.blocks.values(), key=lambda m: m.block_id.block_idx)):
+            if i < total // 2:
+                K = np.zeros((1, shape["block_size"], shape["num_kv_heads"], shape["head_dim"]), dtype=np.float16)
+                V = np.zeros((1, shape["block_size"], shape["num_kv_heads"], shape["head_dim"]), dtype=np.float16)
+                store.put_block(meta.block_id, K, V)
+                meta.resident = False
+                meta.offloaded = True
+
+        sparse_pattern = {"pattern": "sliding_window", "window_size": shape["window_size"], "sink_tokens": 0}
+        decode_positions = list(range(64, min(shape["seq_len"], 512), 64))
+
+        for backend in ("synchronous", "scheduled"):
+            def make_fn(rm=rmap, st=store, sp=sparse_pattern, bs=shape["block_size"], mif=shape["max_in_flight"], sls=shape["simulated_latency_steps"], nl=shape["num_layers"], b=backend, positions=decode_positions):
+                if b == "synchronous":
+                    def fn():
+                        from ops.kv_offload_ops import prefetch_kv_block
+                        for pos in positions:
+                            from ops.long_context_ops import needed_positions_for_sparse_decode
+                            needed = needed_positions_for_sparse_decode(length=pos, sparse_pattern=sp)
+                            if not needed:
+                                continue
+                            from models.kv_offload import token_positions_to_block_ids
+                            for layer_idx in range(nl):
+                                bids = token_positions_to_block_ids(needed, layer_idx=layer_idx, batch_idx=0, block_size=bs)
+                                for bid in bids:
+                                    meta = rm.get(bid)
+                                    if meta is not None and meta.offloaded:
+                                        lc = (np.zeros((1, shape["seq_len"], shape["num_kv_heads"], shape["head_dim"]), dtype=np.float32),
+                                              np.zeros((1, shape["seq_len"], shape["num_kv_heads"], shape["head_dim"]), dtype=np.float32))
+                                        prefetch_kv_block(lc, meta, st)
+                else:
+                    def fn():
+                        sched = KVPrefetchScheduler(st, rm, config=KVPrefetchSchedulerConfig(max_in_flight=mif, simulated_latency_steps=sls))
+                        for pos in positions:
+                            for layer_idx in range(nl):
+                                prefetch_blocks_for_sparse_decode(scheduler=sched, residency_map=rm, layer_idx=layer_idx, batch_idx=0, current_length=pos, sparse_pattern=sp, block_size=bs, lookahead_tokens=shape["lookahead_tokens"])
+                            sched.advance_step()
+                return fn
+            _run(results, "kv_prefetch_scheduler", f"scheduler_{backend}", backend, dtype_name, shape, time_fn(make_fn(), warmup=1, iters=iters), fail_fast)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick", action="store_true")
@@ -1079,6 +1147,7 @@ def main():
     _long_context_runtime_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _speculative_decoding_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _parallel_speculative_verify_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
+    _kv_prefetch_scheduler_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
 
     payload = {
         "system_info": collect_system_info(),
