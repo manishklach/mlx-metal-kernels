@@ -125,11 +125,21 @@ def ensure_prefetched_before_attention(
     if not block_ids:
         return []
 
-    pending = [bid for bid in block_ids if scheduler._is_block_pending(bid)]
-    if not pending:
+    needing_prefetch: list[Any] = []
+    for bid in block_ids:
+        meta = getattr(scheduler, "residency_map", None).get(bid) if hasattr(scheduler, "residency_map") else None
+        if meta is not None and meta.resident:
+            continue
+        if scheduler._is_block_pending(bid):
+            needing_prefetch.append(bid)
+        else:
+            scheduler.submit(bid, priority=0, reason="ensure_prefetched")
+            needing_prefetch.append(bid)
+
+    if not needing_prefetch:
         return _make_all_resident_results(block_ids)
 
-    results = scheduler.wait_for(pending, layer_caches=layer_caches, max_steps=max_steps)
+    results = scheduler.wait_for(needing_prefetch, layer_caches=layer_caches, max_steps=max_steps)
 
     failed = [r for r in results if not r.ok]
     if failed:

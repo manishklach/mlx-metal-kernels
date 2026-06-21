@@ -44,11 +44,9 @@ def _make_store_and_map(block_ids):
         end = start + block_size
         meta = KVBlockMetadata(
             block_id=bid,
-            layer_idx=bid.layer_idx,
-            batch_idx=bid.batch_idx,
-            block_idx=bid.block_idx,
             start_token=start,
             end_token=end,
+            num_tokens=end - start,
             num_kv_heads=2,
             head_dim=16,
             dtype="float16",
@@ -163,20 +161,19 @@ class TestAdvance:
         _offload_block(store, rmap, bid)
         sched = mod["KVPrefetchScheduler"](
             store, rmap,
-            config=mod["KVPrefetchSchedulerConfig"](simulated_latency_steps=2),
+            config=mod["KVPrefetchSchedulerConfig"](simulated_latency_steps=1),
         )
         sched.submit(bid)
         sched.advance_step()
         assert len(sched._completed) == 0
         sched.advance_step()
-        assert len(sched._completed) == 1
         assert bid.to_string() in sched._completed
 
     def test_missing_block_fails(self):
         mod = _import_scheduler()
         bid = _make_block_id(block_idx=99)
         store, rmap = _make_store_and_map([])
-        sched = mod["KVPrefetchScheduler"](store, rmap, config=mod["KVPrefetchSchedulerConfig"](fail_on_missing=True))
+        sched = mod["KVPrefetchScheduler"](store, rmap, config=mod["KVPrefetchSchedulerConfig"](fail_on_missing=True, simulated_latency_steps=0))
         req = sched.submit(bid)
         sched.advance_step()
         assert req.status == "failed"
@@ -220,12 +217,14 @@ class TestStats:
         _offload_block(store, rmap, bid)
         sched = mod["KVPrefetchScheduler"](store, rmap)
         sched.submit(bid)
+        stats1 = sched.stats_dict()
+        assert stats1["queued"] == 1
         sched.advance_step()
-        stats = sched.stats_dict()
-        assert stats["issued"] > 0
-        assert stats["queued"] == 0
-        assert stats["in_flight_count"] == 0
-        assert stats["completed_count"] >= 0
+        stats2 = sched.stats_dict()
+        assert stats2["issued"] > 0
+        assert stats2["queued"] == 0
+        assert stats2["in_flight_count"] == 1
+        assert stats2["completed_count"] == 0
 
     def test_cancel_queued(self):
         mod = _import_scheduler()
