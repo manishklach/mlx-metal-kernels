@@ -495,8 +495,8 @@ def reference_paged_quantized_kv_gqa_decode_attention(
                 block_idx = pos // PAGE_SIZE
                 offset = pos % PAGE_SIZE
                 page_id = int(paged_qkv.block_table[b, block_idx].item())
-                rows_k.append(Kf[page_id, offset:offset + 1, hkv:hkv + 1, :])
-                rows_v.append(Vf[page_id, offset:offset + 1, hkv:hkv + 1, :])
+                rows_k.append(Kf[page_id:page_id + 1, offset:offset + 1, hkv:hkv + 1, :])
+                rows_v.append(Vf[page_id:page_id + 1, offset:offset + 1, hkv:hkv + 1, :])
             k_b = mx.concatenate(rows_k, axis=1) if rows_k else mx.zeros((1, 0, 1, D), dtype=mx.float32)
             v_b = mx.concatenate(rows_v, axis=1) if rows_v else mx.zeros((1, 0, 1, D), dtype=mx.float32)
             gathered_K.append(k_b)
@@ -701,8 +701,8 @@ def reference_sparse_paged_quantized_kv_gqa_decode_attention(
                 block_idx = pos // PAGE_SIZE
                 offset = pos % PAGE_SIZE
                 page_id = int(paged_qkv.block_table[b, block_idx].item())
-                rows_k.append(Kf[page_id, offset:offset + 1, hkv:hkv + 1, :])
-                rows_v.append(Vf[page_id, offset:offset + 1, hkv:hkv + 1, :])
+                rows_k.append(Kf[page_id:page_id + 1, offset:offset + 1, hkv:hkv + 1, :])
+                rows_v.append(Vf[page_id:page_id + 1, offset:offset + 1, hkv:hkv + 1, :])
             k_head = mx.concatenate(rows_k, axis=1)
             v_head = mx.concatenate(rows_v, axis=1)
             scores = mx.matmul(q_head.transpose(0, 2, 1, 3), k_head.transpose(0, 2, 3, 1)) * float(scale)
