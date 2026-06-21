@@ -262,9 +262,13 @@ def token_positions_to_block_ids(
     batch_idx: int,
     block_size: int,
 ) -> list[KVBlockId]:
+    if block_size <= 0:
+        raise ValueError(f"block_size must be positive, got {block_size}")
     seen: set[tuple[int, int, int]] = set()
     result: list[KVBlockId] = []
     for pos in sorted(set(positions)):
+        if pos < 0:
+            raise ValueError(f"token positions must be >= 0, got {pos}")
         block_idx = pos // block_size
         key = (layer_idx, batch_idx, block_idx)
         if key not in seen:

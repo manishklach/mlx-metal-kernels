@@ -41,8 +41,8 @@ def _fill_cache(cache, fill_value: float = 1.0):
         V[:] = -(i + 1) * fill_value
 
 
-def _all_equal(value, expected: float) -> bool:
-    return bool(np.all(np.asarray(value) == expected))
+def _all_equal(value, expected) -> bool:
+    return np.array_equal(np.asarray(value), np.asarray(expected))
 
 
 class TestCommitAcceptedCache:
@@ -209,10 +209,11 @@ class TestDiscardSuffix:
         ).validate()
         try:
             from ops.llama_stack_ops import init_llama_stack_cache
+        except ImportError:
+            pytest.skip("llama_stack_ops require mlx")
+        try:
             paged = init_llama_stack_cache(config, 1, 16, cache_layout="paged", dtype=np.float32)
         except NotImplementedError:
             pytest.skip("Paged multi-layer stack cache is not wired through the stack scaffold yet")
-        except ImportError:
-            pytest.skip("llama_stack_ops require mlx")
         with pytest.raises(NotImplementedError):
             ops["discard_suffix"](paged, 4)

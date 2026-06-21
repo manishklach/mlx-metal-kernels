@@ -208,6 +208,20 @@ class TestTokenPositionsToBlockIds:
         block_idxs = [bid.block_idx for bid in ids]
         assert block_idxs == sorted(block_idxs)
 
+    def test_negative_position_raises(self):
+        with pytest.raises(ValueError, match="token positions"):
+            token_positions_to_block_ids(
+                [-1, 0],
+                layer_idx=0, batch_idx=0, block_size=64,
+            )
+
+    def test_non_positive_block_size_raises(self):
+        with pytest.raises(ValueError, match="block_size"):
+            token_positions_to_block_ids(
+                [0, 1],
+                layer_idx=0, batch_idx=0, block_size=0,
+            )
+
 
 # ---------------------------------------------------------------------------
 # KVResidencyMap
