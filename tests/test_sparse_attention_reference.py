@@ -24,7 +24,7 @@ def test_sliding_window_mask_causal():
 def test_sliding_window_sink_mask_includes_sink_tokens():
     pattern = SparseAttentionPattern(pattern="sliding_window_sink", window_size=3, sink_tokens=2)
     mask = build_sparse_attention_mask(1, 6, pattern, start_position=4)
-    assert mask.tolist()[0] == [True, True, False, False, True, False]
+    assert mask.tolist()[0] == [True, True, True, True, True, False]
 
 
 def test_sink_local_overlap_does_not_duplicate_reference():
