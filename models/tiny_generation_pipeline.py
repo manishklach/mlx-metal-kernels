@@ -319,18 +319,9 @@ class TinyGenerationPipeline:
                 )
                 logits = None
             else:
-                replay_length = max(0, match.matched_length - 1)
-                replay_state = self.reset_cache(B=1)
-                try:
-                    from ops.kv_cache_reuse_ops import copy_prefix_cache_into
-                except ImportError:
-                    return None
-                replay_state.cache = copy_prefix_cache_into(match.entry.stack_cache, replay_state.cache, replay_length)
-                replay_state.position = replay_length
-                replay_state.generated_ids = list(input_ids[:replay_length])
-                state = replay_state
-                suffix = [input_ids[-1]]
-                logits = None
+                state = self.reset_cache(B=1)
+                logits, state = self.model.prefill_token_ids(input_ids, state, generation_config=generation_config)
+                return state, logits
             for token_id in suffix:
                 logits, state = self.model.decode_step(token_id, state, generation_config=generation_config)
             return state, logits

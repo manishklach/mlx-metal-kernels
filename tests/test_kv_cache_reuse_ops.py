@@ -44,6 +44,10 @@ def _make_cache(config=None, B=1, max_seq_len=16, dtype=np.float32):
     return init_llama_stack_cache(config, B, max_seq_len, cache_layout="contiguous", dtype=dtype)
 
 
+def _all_equal(value, expected: float) -> bool:
+    return bool(np.all(np.asarray(value) == expected))
+
+
 def test_clone_layer_cache():
     ops = _get_cache_ops()
     config = LlamaLikeConfig(
@@ -115,10 +119,10 @@ def test_copy_prefix_cache_into():
         lc[1][:, :5] = 7.0
     result = ops["copy_prefix_cache_into"](src, dst, length=5)
     for r_lc in result.layer_caches:
-        assert np.all(r_lc[0][:, :5] == 42.0)
-        assert np.all(r_lc[1][:, :5] == 7.0)
-        assert np.all(r_lc[0][:, 5:] == 0.0)
-        assert np.all(r_lc[1][:, 5:] == 0.0)
+        assert _all_equal(r_lc[0][:, :5], 42.0)
+        assert _all_equal(r_lc[1][:, :5], 7.0)
+        assert _all_equal(r_lc[0][:, 5:], 0.0)
+        assert _all_equal(r_lc[1][:, 5:], 0.0)
 
 
 def test_copy_prefix_cache_into_mismatch():

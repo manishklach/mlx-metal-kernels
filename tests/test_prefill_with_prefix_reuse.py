@@ -102,7 +102,7 @@ def test_prefix_cache_exact_match():
     prefill_with_prefix_reuse([10, 20, 30], model, prefix_cache=cache, generation_config=gcfg)
     _, state, meta = prefill_with_prefix_reuse([10, 20, 30], model, prefix_cache=cache, generation_config=gcfg)
     assert meta["prefix_cache_hit"]
-    assert meta["suffix_mode"] == "replay_last_token"
+    assert meta["suffix_mode"] == "exact_match_prefill"
     assert state.generated_ids == [10, 20, 30]
 
 

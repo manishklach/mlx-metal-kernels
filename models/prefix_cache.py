@@ -227,20 +227,36 @@ def prefill_with_prefix_reuse(
     max_seq_len=None,
 ):
     GenerationConfig, ToyGenerationState = _generation_classes()
+
+    def _run_full_prefill(run_state):
+        logits_local, updated_state_local = model.prefill_token_ids(
+            token_ids,
+            run_state,
+            generation_config=generation_config,
+        )
+        if prefix_cache is not None:
+            cached_cache_local = _clone_stack_cache_safe(updated_state_local.cache)
+            prefix_cache.store(
+                PrefixCacheEntry(
+                    fingerprint=fp,
+                    token_ids=list(token_ids),
+                    stack_cache=cached_cache_local,
+                    metadata={"num_prompt_tokens": len(token_ids)},
+                )
+            )
+        return logits_local, updated_state_local
+
     if not token_ids:
         raise ValueError("token_ids must contain at least one token")
     if state is None:
         if max_seq_len is None:
             max_seq_len = getattr(model.config, "max_position_embeddings", max(token_ids) + 64)
         state = model.init_state(B=1, max_seq_len=max_seq_len)
+    fp = fingerprint or compute_fingerprint(model.config, getattr(model, "tokenizer", None), model=model)
     if prefix_cache is None or prefix_cache.size == 0:
         if fingerprint is not None:
             _ = fingerprint
-        logits, updated_state = model.prefill_token_ids(
-            token_ids,
-            state,
-            generation_config=generation_config,
-        )
+        logits, updated_state = _run_full_prefill(state)
         metadata = {
             "prefix_cache_hit": False,
             "cache_available": prefix_cache is not None,
@@ -249,7 +265,6 @@ def prefill_with_prefix_reuse(
             "suffix_mode": "full_prefill",
         }
         return logits, updated_state, metadata
-    fp = fingerprint or compute_fingerprint(model.config, getattr(model, "tokenizer", None), model=model)
     match = prefix_cache.lookup(token_ids, fp)
     if match.matched:
         suffix = match.suffix_token_ids
@@ -265,13 +280,13 @@ def prefill_with_prefix_reuse(
                 logits, state = model.decode_step(token_id, state, generation_config=generation_config)
             suffix_mode = "decode_suffix"
         else:
-            replay_length = max(0, match.matched_length - 1)
-            replay_state = model.init_state(B=1, max_seq_len=match.entry.stack_cache.max_seq_len)
-            replay_state.cache = _copy_prefix_cache_safe(match.entry.stack_cache, replay_state.cache, replay_length)
-            replay_state.position = replay_length
-            replay_state.generated_ids = list(token_ids[:replay_length])
-            logits, state = model.decode_step(token_ids[-1], replay_state, generation_config=generation_config)
-            suffix_mode = "replay_last_token"
+            fresh_state = model.init_state(B=1, max_seq_len=match.entry.stack_cache.max_seq_len)
+            logits, state = model.prefill_token_ids(
+                token_ids,
+                fresh_state,
+                generation_config=generation_config,
+            )
+            suffix_mode = "exact_match_prefill"
         metadata = {
             "prefix_cache_hit": True,
             "cache_available": True,
@@ -280,19 +295,7 @@ def prefill_with_prefix_reuse(
             "suffix_mode": suffix_mode,
         }
         return logits, state, metadata
-    logits, updated_state = model.prefill_token_ids(
-        token_ids,
-        state,
-        generation_config=generation_config,
-    )
-    cached_cache = _clone_stack_cache_safe(updated_state.cache)
-    entry = PrefixCacheEntry(
-        fingerprint=fp,
-        token_ids=list(token_ids),
-        stack_cache=cached_cache,
-        metadata={"num_prompt_tokens": len(token_ids)},
-    )
-    prefix_cache.store(entry)
+    logits, updated_state = _run_full_prefill(state)
     metadata = {
         "prefix_cache_hit": False,
         "cache_available": True,
