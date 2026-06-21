@@ -115,6 +115,11 @@ BACKEND_REGISTRY = {
             "fused_experimental",
         ],
     },
+    "prefix_cache_reuse": {
+        "function": "models.prefix_cache.prefill_with_prefix_reuse",
+        "reference_backend": "reference",
+        "candidate_backends": ["in_memory"],
+    },
 }
 
 

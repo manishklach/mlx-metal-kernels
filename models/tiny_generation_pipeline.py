@@ -13,6 +13,11 @@ from .generation import (
     _optional_llama_stack_ops,
 )
 from .llama_config import LlamaLikeConfig
+from .prefix_cache import (
+    InMemoryPrefixCache,
+    PrefixCacheEntry,
+    compute_fingerprint,
+)
 from .quantized_package_io import QuantizedCheckpointPackage
 from .sampling import apply_repetition_penalty, greedy_sample, sample_logits
 from .tokenization import CharTokenizer, TokenizerProtocol
@@ -34,6 +39,7 @@ class TinyGenerationPipelineConfig:
     backend_preset: str = "fused_experimental"
     cache_layout: str = "contiguous"
     use_prefill: bool = True
+    use_prefix_cache: bool = False
 
     def validate(self) -> "TinyGenerationPipelineConfig":
         if self.hidden_size != self.num_attention_heads * self.head_dim:
@@ -158,6 +164,9 @@ class TinyGenerationPipeline:
             cache_layout=self.config.cache_layout,
             dtype=None,
         )
+        self.prefix_cache: InMemoryPrefixCache | None = (
+            InMemoryPrefixCache(max_size=64) if self.config.use_prefix_cache else None
+        )
         self._state: ToyGenerationState | None = None
 
     def validate_alignment(self) -> AlignmentReport:
@@ -178,6 +187,8 @@ class TinyGenerationPipeline:
             "backend_preset": self.config.backend_preset,
             "cache_layout": self.config.cache_layout,
             "use_prefill": self.config.use_prefill,
+            "use_prefix_cache": self.config.use_prefix_cache,
+            "prefix_cache_size": len(self.prefix_cache) if self.prefix_cache else 0,
             "bits": self.config.bits,
             "group_size": self.config.group_size,
             "hidden_size": self.llama_config.hidden_size,
@@ -232,6 +243,7 @@ class TinyGenerationPipeline:
         generation_config: GenerationConfig | None = None,
         *,
         validate_alignment: bool = True,
+        ignore_prefix_cache: bool = False,
     ) -> list[int]:
         generation_config = (generation_config or self.generation_config).validate()
         if validate_alignment:
@@ -241,9 +253,18 @@ class TinyGenerationPipeline:
             return self.model.generate_token_ids(input_ids, generation_config)
         if not input_ids:
             raise ValueError("input_ids must contain at least one token")
-        prefill = self.prefill_prompt(input_ids, generation_config=generation_config)
-        state = ToyGenerationState(cache=prefill.cache, position=prefill.next_position, generated_ids=list(input_ids))
-        logits = prefill.logits
+        if self.prefix_cache is not None and not ignore_prefix_cache:
+            result = self._prefill_with_cache(input_ids, generation_config)
+            if result is not None:
+                state, logits = result
+            else:
+                prefill = self.prefill_prompt(input_ids, generation_config=generation_config)
+                state = ToyGenerationState(cache=prefill.cache, position=prefill.next_position, generated_ids=list(input_ids))
+                logits = prefill.logits
+        else:
+            prefill = self.prefill_prompt(input_ids, generation_config=generation_config)
+            state = ToyGenerationState(cache=prefill.cache, position=prefill.next_position, generated_ids=list(input_ids))
+            logits = prefill.logits
         all_ids = list(input_ids)
         eos_token_id = generation_config.eos_token_id
         if eos_token_id is None:
@@ -269,6 +290,47 @@ class TinyGenerationPipeline:
                 break
             logits, state = self.model.decode_step(next_token, state, generation_config=generation_config)
         return all_ids
+
+    @staticmethod
+    def _clone_stack_cache_safe(stack_cache):
+        try:
+            from ops.kv_cache_reuse_ops import clone_stack_cache as _csc
+        except ImportError:
+            return None
+        return _csc(stack_cache)
+
+    def _prefill_with_cache(
+        self,
+        input_ids: list[int],
+        generation_config: GenerationConfig,
+    ) -> tuple[ToyGenerationState, Any] | None:
+        fp = compute_fingerprint(self.llama_config, self.tokenizer)
+        match = self.prefix_cache.lookup(input_ids, fp)
+        if match.matched:
+            cache_clone = self._clone_stack_cache_safe(match.entry.stack_cache)
+            if cache_clone is None:
+                return None
+            state = ToyGenerationState(
+                cache=cache_clone,
+                position=match.matched_length,
+                generated_ids=list(input_ids[:match.matched_length]),
+            )
+            logits = None
+            for token_id in input_ids[match.matched_length:]:
+                logits, state = self.model.decode_step(token_id, state, generation_config=generation_config)
+            return state, logits
+        state = self.reset_cache(B=1)
+        logits, updated_state = self.model.prefill_token_ids(input_ids, state, generation_config=generation_config)
+        cached_cache = self._clone_stack_cache_safe(updated_state.cache)
+        if cached_cache is not None:
+            entry = PrefixCacheEntry(
+                fingerprint=fp,
+                token_ids=list(input_ids),
+                stack_cache=cached_cache,
+                metadata={"num_prompt_tokens": len(input_ids)},
+            )
+            self.prefix_cache.store(entry)
+        return updated_state, logits
 
     def reset_cache(self, B: int = 1) -> ToyGenerationState:
         self._state = self.model.init_state(

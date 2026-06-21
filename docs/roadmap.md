@@ -39,7 +39,7 @@ This repo is evolving as an experimental Apple Silicon MLX/Metal kernel lab for 
 - [x] Local real-model smoke test
 - [ ] Quantized package tensor-data writer
 - [x] Sparse and sliding-window GQA attention kernels
-- [ ] Prefix KV-cache reuse and cache matching
+- [x] Prefix KV-cache reuse and cache matching
 - [ ] Speculative decoding / MTP scaffold
 - [ ] Flash/NAND KV offload tier
 - [ ] Quantized KV-cache attention
@@ -250,8 +250,14 @@ The intended workflow for each new primitive is:
 
 ### v0.37 prefix KV-cache reuse and cache matching
 
-- explore prefix-cache reuse and cache identity checks for repeated prompts
-- keep reuse policy explicit and correctness-first
+- [x] `ops/kv_cache_reuse_ops.py` — clone, slice, copy, cache_prefix_equal ops
+- [x] `models/prefix_cache.py` — fingerprint, InMemoryPrefixCache, prefill_with_prefix_reuse
+- [x] pipeline integration via `use_prefix_cache` flag
+- [x] fingerprint-based safety (avoids cross-model/config reuse)
+- [x] LRU eviction at capacity
+- [x] test coverage for cache ops, prefix matching, eviction, and end-to-end reuse
+- [x] benchmark scaffold
+- [x] example and documentation
 
 ### v0.38 speculative decoding / MTP scaffold
 

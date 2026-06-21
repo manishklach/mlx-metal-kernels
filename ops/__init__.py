@@ -40,6 +40,13 @@ from .gqa_ops import (
     validate_gqa_heads,
 )
 from .kv_cache_ops import kv_cache_update, reference_kv_cache_update
+from .kv_cache_reuse_ops import (
+    cache_prefix_equal,
+    clone_layer_cache,
+    clone_stack_cache,
+    copy_prefix_cache_into,
+    slice_layer_cache,
+)
 from .layout_ops import qkv_split, qkv_split_rope, reference_qkv_split, reference_qkv_split_rope
 from .llama_layer_ops import (
     LlamaLayerBackendConfig,
@@ -225,9 +232,14 @@ __all__ = [
     "qkv_split",
     "qkv_split_rope",
     "maybe_expand_kv_heads_reference",
+    "cache_prefix_equal",
+    "clone_layer_cache",
+    "clone_stack_cache",
+    "copy_prefix_cache_into",
     "residual_add",
     "residual_rmsnorm_block",
     "rms_norm",
+    "slice_layer_cache",
     "rmsnorm_residual",
     "swiglu",
     "swiglu_down_project",

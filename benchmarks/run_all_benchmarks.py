@@ -728,6 +728,39 @@ def _llama_stack_prefill_cases(results, dtype, dtype_name, quick, iters, fail_fa
             )
 
 
+def _prefix_cache_reuse_cases(results, dtype, dtype_name, quick, iters, fail_fast):
+    from models.prefix_cache import prefill_with_prefix_reuse, InMemoryPrefixCache, compute_fingerprint
+    from models.generation import GenerationConfig
+
+    shapes = (
+        [{"prompt_tokens": 4, "reused_tokens": 3}]
+        if quick
+        else [{"prompt_tokens": 8, "reused_tokens": 6}]
+    )
+    for shape in shapes:
+        from models import create_synthetic_stack_generation_model
+        model = create_synthetic_stack_generation_model(seed=42)
+        gen_config = GenerationConfig(max_new_tokens=2, backend_preset="reference")
+        prompt_ids = list(range(shape["prompt_tokens"]))
+        cache = InMemoryPrefixCache(max_size=16)
+        prefill_with_prefix_reuse(prompt_ids, model, prefix_cache=cache, generation_config=gen_config)
+        reused_ids = list(range(shape["reused_tokens"]))
+        _run(
+            results,
+            "prefix_cache_reuse",
+            "prefill_with_prefix_reuse",
+            "in_memory",
+            dtype_name,
+            shape,
+            lambda m=model, ids=prompt_ids, c=cache, gc=gen_config: time_fn(
+                lambda: (prefill_with_prefix_reuse(ids, m, prefix_cache=c, generation_config=gc), 0)[1],
+                warmup=1,
+                iters=iters,
+            ),
+            fail_fast,
+        )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick", action="store_true")
@@ -770,6 +803,7 @@ def main():
     _llama_stack_decode_cases(results, dtype, args.dtype, quick, iters, args.fail_fast, args.use_autotune)
     _llama_stack_prefill_cases(results, dtype, args.dtype, quick, iters, args.fail_fast, args.use_autotune)
     _tiny_generation_pipeline_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
+    _prefix_cache_reuse_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
 
     payload = {
         "system_info": collect_system_info(),

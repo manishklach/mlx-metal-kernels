@@ -104,6 +104,13 @@ from .smoke_test import (
     run_local_smoke_test,
 )
 from .tensor_store import InMemoryTensorStore, ManifestTensorStore, SafeTensorsTensorStore, TensorStore
+from .prefix_cache import (
+    InMemoryPrefixCache,
+    PrefixCacheEntry,
+    PrefixCacheMatch,
+    compute_fingerprint,
+    prefill_with_prefix_reuse,
+)
 from .tiny_generation_pipeline import (
     GenerationResult,
     PrefillResult,
@@ -143,6 +150,11 @@ __all__ = [
     "apply_repetition_penalty",
     "CharTokenizer",
     "CheckpointAdapter",
+    "compute_fingerprint",
+    "InMemoryPrefixCache",
+    "PrefixCacheEntry",
+    "PrefixCacheMatch",
+    "prefill_with_prefix_reuse",
     "CheckpointAdapterConfig",
     "CheckpointManifest",
     "CheckpointQuantizer",

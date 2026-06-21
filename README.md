@@ -614,6 +614,37 @@ python examples/prefill_then_decode_demo.py
 python benchmarks/bench_llama_prefill_stack.py --bits 4 --B 1 --S 64 --num-layers 2 --hidden-size 512 --intermediate-size 2048 --num-heads 8 --num-kv-heads 2 --head-dim 64 --MAX_S 128 --dtype float16 --backend-preset all --validate
 ```
 
+## Prefix KV-cache reuse
+
+The repo includes a correctness-first prefix KV-cache reuse scaffold that caches previously computed KV-cache entries and reuses them when a prompt shares a prefix with a previously seen prompt.
+
+Current scope:
+
+- fingerprint-based cache safety (prevents cross-model/config reuse)
+- `InMemoryPrefixCache` with LRU eviction
+- `ops/kv_cache_reuse_ops.py` — clone, slice, copy, compare cache helpers
+- prefix matching (longest-common-token prefix)
+- exact match fast path (clone cached cache, no recomputation)
+- partial match suffix fallback via token-by-token decode
+- `TinyGenerationPipeline` integration via `use_prefix_cache=True`
+
+Out of scope:
+
+- paged cache reuse (reserved for future work)
+- production serving-cache
+- batch > 1
+- automatic/background cache updates
+
+Commands:
+
+```bash
+python examples/prefix_cache_reuse_demo.py
+python benchmarks/bench_prefix_cache_reuse.py --validate --prompt-tokens 8 --reused-tokens 6
+pytest tests/test_prefix_cache.py -v
+pytest tests/test_kv_cache_reuse_ops.py -v
+pytest tests/test_prefill_with_prefix_reuse.py -v
+```
+
 ## Checkpoint converter scaffold
 
 The repo includes a dependency-light checkpoint converter scaffold for turning local layer tensors into repo-native q4/q8 package metadata.
