@@ -3,7 +3,6 @@ from __future__ import annotations
 from models import (
     GenerationConfig,
     InMemoryPrefixCache,
-    compute_fingerprint,
 )
 from models.prefix_cache import prefill_with_prefix_reuse
 
@@ -100,10 +99,10 @@ def test_prefix_cache_exact_match():
     model = _create_model()
     cache = InMemoryPrefixCache(max_size=16)
     gcfg = GenerationConfig(max_new_tokens=2, backend_preset="reference")
-    fp = compute_fingerprint(model.config, getattr(model, "tokenizer", None))
     prefill_with_prefix_reuse([10, 20, 30], model, prefix_cache=cache, generation_config=gcfg)
     _, state, meta = prefill_with_prefix_reuse([10, 20, 30], model, prefix_cache=cache, generation_config=gcfg)
     assert meta["prefix_cache_hit"]
+    assert meta["suffix_mode"] == "replay_last_token"
     assert state.generated_ids == [10, 20, 30]
 
 
@@ -116,6 +115,7 @@ def test_prefix_cache_partial_match():
     _, state, meta = prefill_with_prefix_reuse([10, 20, 30, 40], model, prefix_cache=cache, generation_config=gcfg)
     assert meta["prefix_cache_hit"]
     assert meta["matched_length"] == 3
+    assert meta["suffix_mode"] == "decode_suffix"
     assert state.position == 4
 
 

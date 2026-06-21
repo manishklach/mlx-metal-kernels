@@ -44,6 +44,18 @@ def test_compute_fingerprint_differs():
     assert fp_a != fp_b
 
 
+def test_compute_fingerprint_with_model_differs_by_weights():
+    try:
+        from models import create_synthetic_stack_generation_model
+    except ImportError:
+        pytest.skip("Synthetic stack generation model is not available in this environment")
+    model_a = create_synthetic_stack_generation_model(seed=42)
+    model_b = create_synthetic_stack_generation_model(seed=99)
+    fp_a = compute_fingerprint(model_a.config, getattr(model_a, "tokenizer", None), model=model_a)
+    fp_b = compute_fingerprint(model_b.config, getattr(model_b, "tokenizer", None), model=model_b)
+    assert fp_a != fp_b
+
+
 def test_in_memory_cache_store_and_lookup():
     cache = InMemoryPrefixCache(max_size=16)
     config = tiny_debug_config()

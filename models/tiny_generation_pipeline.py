@@ -304,7 +304,7 @@ class TinyGenerationPipeline:
         input_ids: list[int],
         generation_config: GenerationConfig,
     ) -> tuple[ToyGenerationState, Any] | None:
-        fp = compute_fingerprint(self.llama_config, self.tokenizer)
+        fp = compute_fingerprint(self.llama_config, self.tokenizer, model=self.model)
         match = self.prefix_cache.lookup(input_ids, fp)
         if match.matched:
             cache_clone = self._clone_stack_cache_safe(match.entry.stack_cache)

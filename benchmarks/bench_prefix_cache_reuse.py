@@ -9,6 +9,7 @@ try:
     import mlx.core as mx
 except ImportError:
     mx = None
+import numpy as np
 
 from models import (
     GenerationConfig,
@@ -31,6 +32,17 @@ def _benchmark_prefill(model, token_ids, gen_config, prefix_cache=None):
     return logits, state, meta, elapsed
 
 
+def _assert_logits_close(a, b, *, atol: float = 1e-4) -> None:
+    if a is None or b is None:
+        raise AssertionError("Expected logits from both reference and cache-backed prefill paths")
+    a_np = np.asarray(a)
+    b_np = np.asarray(b)
+    if a_np.shape != b_np.shape:
+        raise AssertionError(f"logit shape mismatch: {a_np.shape} vs {b_np.shape}")
+    if not np.allclose(a_np, b_np, atol=atol, rtol=0.0):
+        raise AssertionError("cache-backed logits diverged from the reference prefill path")
+
+
 def run_benchmark(
     prompt_tokens: int = 8,
     reused_tokens: int = 6,
@@ -50,6 +62,11 @@ def run_benchmark(
     if validate:
         ref_logits, ref_state, _, _ = _benchmark_prefill(model, token_ids, gen_config, prefix_cache=None)
         cache_logits, cache_state, cache_meta, _ = _benchmark_prefill(model, token_ids, gen_config, prefix_cache=prefix_cache)
+        _assert_logits_close(ref_logits, cache_logits)
+        if ref_state.position != cache_state.position:
+            raise AssertionError(f"state position mismatch: {ref_state.position} vs {cache_state.position}")
+        if list(ref_state.generated_ids) != list(cache_state.generated_ids):
+            raise AssertionError("generated_ids mismatch between reference and cache-backed prefill")
         print(f"  Validate: cache_hit={cache_meta['prefix_cache_hit']}, matched_length={cache_meta['matched_length']}")
         if cache_meta["prefix_cache_hit"]:
             print("  Cache hit - reuse working correctly")

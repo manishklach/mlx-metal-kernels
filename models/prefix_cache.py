@@ -28,11 +28,74 @@ def _config_fingerprint(config) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
-def compute_fingerprint(config, tokenizer=None) -> str:
+def _update_hasher_with_array(hasher, value: Any) -> None:
+    array = np.asarray(value)
+    hasher.update(str(array.shape).encode("utf-8"))
+    hasher.update(str(array.dtype).encode("utf-8"))
+    flat = array.reshape(-1) if array.ndim > 0 else array.reshape(1)
+    sample_count = min(256, int(flat.shape[0]))
+    if sample_count == 0:
+        return
+    sample = flat[:sample_count]
+    if flat.shape[0] > sample_count:
+        tail_count = min(64, int(flat.shape[0] - sample_count))
+        if tail_count > 0:
+            sample = np.concatenate([sample, flat[-tail_count:]])
+    hasher.update(sample.tobytes())
+
+
+def _update_hasher(hasher, value: Any) -> None:
+    if value is None:
+        hasher.update(b"none")
+        return
+    if isinstance(value, (str, bytes, int, float, bool)):
+        hasher.update(repr(value).encode("utf-8"))
+        return
+    if isinstance(value, dict):
+        for key in sorted(value):
+            hasher.update(str(key).encode("utf-8"))
+            _update_hasher(hasher, value[key])
+        return
+    if isinstance(value, (list, tuple)):
+        hasher.update(str(type(value)).encode("utf-8"))
+        for item in value:
+            _update_hasher(hasher, item)
+        return
+    if hasattr(value, "shape") and hasattr(value, "dtype"):
+        _update_hasher_with_array(hasher, value)
+        return
+    if hasattr(value, "__dict__"):
+        hasher.update(type(value).__name__.encode("utf-8"))
+        for key in sorted(vars(value)):
+            hasher.update(str(key).encode("utf-8"))
+            _update_hasher(hasher, getattr(value, key))
+        return
+    hasher.update(repr(value).encode("utf-8"))
+
+
+def _model_fingerprint(model) -> str:
+    hasher = hashlib.sha256()
+    hasher.update(type(model).__name__.encode("utf-8"))
+    weights = getattr(model, "stack_weights", None)
+    if weights is None:
+        weights = getattr(model, "layer_weights", None)
+    if weights is not None:
+        _update_hasher(hasher, weights)
+    else:
+        hasher.update(f"object-id:{id(model)}".encode("utf-8"))
+    return hasher.hexdigest()[:16]
+
+
+def compute_fingerprint(config, tokenizer=None, *, model=None) -> str:
     parts = [_config_fingerprint(config)]
     if tokenizer is not None:
         tname = type(tokenizer).__name__
         parts.append(tname)
+        vocab_size = getattr(tokenizer, "vocab_size", None)
+        if vocab_size is not None:
+            parts.append(f"tokenizer_vocab:{int(vocab_size)}")
+    if model is not None:
+        parts.append(_model_fingerprint(model))
     raw = "|".join(parts)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
@@ -186,7 +249,7 @@ def prefill_with_prefix_reuse(
             "suffix_mode": "full_prefill",
         }
         return logits, updated_state, metadata
-    fp = fingerprint or compute_fingerprint(model.config, getattr(model, "tokenizer", None))
+    fp = fingerprint or compute_fingerprint(model.config, getattr(model, "tokenizer", None), model=model)
     match = prefix_cache.lookup(token_ids, fp)
     if match.matched:
         suffix = match.suffix_token_ids
