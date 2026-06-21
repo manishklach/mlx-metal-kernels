@@ -151,6 +151,16 @@ from .tiny_generation_pipeline import (
     TinyGenerationPipelineConfig,
     create_pipeline_from_quantized_package,
 )
+from .long_context_runtime import (
+    LongContextRuntime,
+    LongContextRuntimeConfig,
+    LongContextRuntimeState,
+    LongContextRuntimeReport,
+    LongContextEvent,
+    create_long_context_runtime_state,
+    long_context_prefill,
+    long_context_decode_step,
+)
 from .tokenization import CharTokenizer, TokenizerProtocol, WhitespaceTokenizer
 from .tokenizer_adapters import (
     HFTokenizerAdapter,
@@ -272,6 +282,14 @@ __all__ = [
     "validate_tokenizer_against_package",
     "validate_weight_shapes",
     "WhitespaceTokenizer",
+    "LongContextRuntime",
+    "LongContextRuntimeConfig",
+    "LongContextRuntimeState",
+    "LongContextRuntimeReport",
+    "LongContextEvent",
+    "create_long_context_runtime_state",
+    "long_context_prefill",
+    "long_context_decode_step",
     "KVBlockId",
     "KVBlockMetadata",
     "KVResidencyMap",

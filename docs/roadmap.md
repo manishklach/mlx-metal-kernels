@@ -311,13 +311,27 @@ The intended workflow for each new primitive is:
 - [x] Benchmark scaffold and examples
 - [x] Documentation and roadmap update
 
-### v0.41
+### v0.41 Sparse + prefix-cache + offload integration
 
-- Sparse + prefix-cache + offload integration
-- Parallel speculative verification kernel
+- [x] LongContextRuntimeConfig with validation (prefix/sparse/offload/quantize flags)
+- [x] LongContextEvent, LongContextRuntimeReport with events/summary/pretty-print
+- [x] LongContextRuntimeState with stack_cache/prefix_cache/residency_map/offload_store
+- [x] create_long_context_runtime_state initializer
+- [x] needed_positions_for_sparse_decode (sliding-window, sink, dict support)
+- [x] needed_blocks_for_positions (KVBlockId mapping)
+- [x] ensure_blocks_ready_for_attention (prefetch before attention, missing-block guard)
+- [x] long_context_prefill with prefix-cache reuse + offload planning
+- [x] long_context_decode_step with sparse position planning + prefetch + offload
+- [x] LongContextRuntime high-level class (init_state, prefill, decode, generate)
+- [x] Quantized KV integration as metadata/planning scaffold
+- [x] Test coverage: config (10), event/report/state (5), needed positions (4), needed blocks (3), ensure_blocks (3), quantized_kv (5)
+- [x] Benchmark scaffold (quick and full cases)
+- [x] Example demo
+- [x] Documentation and roadmap update
 
 ### v0.42
 
+- Parallel speculative verification kernel
 - Async KV prefetch scheduler
 - Paged quantized KV-cache
 

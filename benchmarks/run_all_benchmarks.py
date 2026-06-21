@@ -912,6 +912,84 @@ def _speculative_decoding_cases(results, dtype, dtype_name, quick, iters, fail_f
             )
 
 
+def _long_context_runtime_cases(results, dtype, dtype_name, quick, iters, fail_fast):
+    if quick:
+        shapes = [
+            {"prompt_len": 32, "shared_prefix_len": 24, "max_new_tokens": 2, "num_layers": 1,
+             "hidden_size": 64, "intermediate_size": 128, "num_heads": 4, "num_kv_heads": 2,
+             "head_dim": 16, "vocab_size": 64, "window_size": 8, "sink_tokens": 2},
+        ]
+    else:
+        shapes = [
+            {"prompt_len": 512, "shared_prefix_len": 384, "max_new_tokens": 8, "num_layers": 2,
+             "hidden_size": 512, "intermediate_size": 2048, "num_heads": 8, "num_kv_heads": 2,
+             "head_dim": 64, "vocab_size": 128, "window_size": 128, "sink_tokens": 4},
+        ]
+    for shape in shapes:
+        from models.llama_config import LlamaLikeConfig
+        from models.long_context_runtime import (
+            LongContextRuntime,
+            LongContextRuntimeConfig,
+        )
+        from ops.sparse_attention_ops import SparseAttentionPattern
+        from models.kv_offload_policy import KVOffloadPolicyConfig
+
+        model_config = LlamaLikeConfig(
+            hidden_size=shape["hidden_size"],
+            intermediate_size=shape["intermediate_size"],
+            num_attention_heads=shape["num_heads"],
+            num_key_value_heads=shape["num_kv_heads"],
+            head_dim=shape["head_dim"],
+            num_hidden_layers=shape["num_layers"],
+            max_position_embeddings=shape["prompt_len"] + shape["max_new_tokens"] + 64,
+            vocab_size=shape["vocab_size"],
+        ).validate()
+        from ops.llama_stack_ops import create_random_quantized_llama_stack_weights
+        weights = create_random_quantized_llama_stack_weights(
+            model_config, vocab_size=shape["vocab_size"],
+            bits=4, group_size=32, dtype=mx.float16,
+            seed=42, include_embedding=True, include_lm_head=True,
+        )
+        runtime_config = LongContextRuntimeConfig(
+            use_prefix_cache=True,
+            use_sparse_attention=True,
+            use_kv_offload=True,
+            sparse_pattern=SparseAttentionPattern(
+                pattern="sliding_window_sink",
+                window_size=shape["window_size"],
+                sink_tokens=shape["sink_tokens"],
+                causal=True,
+            ),
+            offload_policy=KVOffloadPolicyConfig(
+                block_size=16,
+                keep_recent_blocks=1,
+                keep_sink_blocks=1,
+            ).validate(),
+            backend_preset="fused_experimental",
+        ).validate()
+        runtime = LongContextRuntime(
+            model_config=model_config,
+            stack_weights=weights,
+            embedding=weights.embedding,
+            lm_head=weights.lm_head,
+            runtime_config=runtime_config,
+        )
+        prompt_b = list(range(shape["shared_prefix_len"])) + list(range(shape["shared_prefix_len"], shape["prompt_len"]))
+        _run(
+            results,
+            "long_context_runtime",
+            "generate",
+            "integrated",
+            dtype_name,
+            shape,
+            lambda r=runtime, pb=prompt_b, mnt=shape["max_new_tokens"]: time_fn(
+                lambda: r.generate(pb, max_new_tokens=mnt, greedy=True),
+                warmup=1, iters=iters,
+            ),
+            fail_fast,
+        )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick", action="store_true")
@@ -957,6 +1035,7 @@ def main():
     _prefix_cache_reuse_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _kv_offload_tier_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _quantized_kv_decode_attention_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
+    _long_context_runtime_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _speculative_decoding_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
 
     payload = {

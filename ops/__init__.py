@@ -48,6 +48,11 @@ from .kv_cache_reuse_ops import (
     copy_prefix_cache_into,
     slice_layer_cache,
 )
+from .long_context_ops import (
+    needed_positions_for_sparse_decode,
+    needed_blocks_for_positions,
+    ensure_blocks_ready_for_attention,
+)
 from .kv_offload_ops import (
     apply_offload_plan,
     extract_kv_block,
@@ -183,6 +188,9 @@ __all__ = [
     "reference_quantized_kv_gqa_decode_attention",
     "reference_quantized_kv_sparse_gqa_decode_attention",
     "quantized_kv_sparse_gqa_decode_attention",
+    "needed_positions_for_sparse_decode",
+    "needed_blocks_for_positions",
+    "ensure_blocks_ready_for_attention",
     "apply_offload_plan",
     "extract_kv_block",
     "insert_kv_block",

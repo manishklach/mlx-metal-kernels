@@ -133,6 +133,11 @@ BACKEND_REGISTRY = {
             "metal_q4",
         ],
     },
+    "long_context_runtime": {
+        "function": "models.long_context_runtime.LongContextRuntime.generate",
+        "reference_backend": "reference",
+        "candidate_backends": ["integrated"],
+    },
     "speculative_decoding": {
         "function": "models.speculative_decoding.SpeculativeGenerator.generate_ids",
         "reference_backend": "reference",

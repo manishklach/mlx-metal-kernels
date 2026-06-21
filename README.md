@@ -174,7 +174,35 @@ python examples/quantized_kv_decode_demo.py
 python benchmarks/bench_quantized_kv_decode_attention.py --bits 8 --B 1 --MAX_S 4096 --length 4096 --Hq 32 --Hkv 8 --D 128 --group-size 32 --backend all --validate --compare-fp16
 python benchmarks/bench_quantized_kv_decode_attention.py --bits 4 --B 1 --MAX_S 4096 --length 4096 --Hq 32 --Hkv 8 --D 128 --group-size 32 --backend all --validate --compare-fp16
 ```
- 
+
+### Long-context runtime integration
+
+The repo includes an experimental long-context runtime scaffold that combines prefix KV-cache reuse, sparse attention planning, KV offload/prefetch, and optional quantized-KV metadata into one explicit path.
+
+Current scope:
+
+- token-prefix reuse via `InMemoryPrefixCache`
+- sparse needed-position planning via `SparseAttentionPattern`
+- offload residency checks via `KVResidencyMap`
+- prefetch before attention via `ensure_blocks_ready_for_attention`
+- structured runtime reports via `LongContextRuntimeReport`
+- synthetic long-context demo
+- benchmark scaffold
+
+Out of scope:
+
+- production serving runtime
+- async flash scheduler
+- automatic runtime policy
+- real model quality
+- distributed prefix cache
+
+Commands:
+```
+python examples/long_context_runtime_demo.py
+python benchmarks/bench_long_context_runtime.py --prompt-len 512 --shared-prefix-len 384 --max-new-tokens 8 --prefix-reuse --sparse --window-size 128 --sink-tokens 4 --offload --offload-ratio 0.5 --num-layers 2 --hidden-size 512 --intermediate-size 2048 --num-heads 8 --num-kv-heads 2 --head-dim 64 --bits 4 --backend-preset fused_experimental
+```
+
 ### Benchmarking and autotuning
 
 - Unified benchmark runner
