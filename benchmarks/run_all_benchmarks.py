@@ -25,6 +25,7 @@ from ops.paged_kv_ops import allocate_paged_kv_cache, paged_decode_attention
 from ops.quant_ops import dequant_q4, dequant_q8, pack_q4, q4_matvec_decode, q8_matvec_decode
 from ops.quantized_decode_block_ops import paged_quantized_decode_block, quantized_decode_block
 from ops.rope_ops import apply_rope
+from ops.sparse_attention_ops import SparseAttentionPattern, sparse_gqa_attention, sparse_gqa_decode_attention
 from ops.toy_transformer_ops import make_toy_layer_weights, paged_toy_transformer_decode_layer, toy_transformer_decode_layer
 from models.llama_config import LlamaLikeConfig
 from models.tiny_generation_pipeline import TinyGenerationPipeline, TinyGenerationPipelineConfig
@@ -443,6 +444,52 @@ def _threadgroup_attention_v2_cases(results, dtype, dtype_name, quick, iters, fa
         _run(results, "threadgroup_attention_v2", "fast_attention", "threadgroup", dtype_name, shape, lambda q=Q, k=K, v=V, c=causal: time_fn(lambda: fast_attention(q, k, v, causal=c, backend="threadgroup"), warmup=3, iters=iters), fail_fast)
 
 
+def _sparse_attention_cases(results, dtype, dtype_name, quick, iters, fail_fast, use_autotune):
+    shapes = (
+        [{"B": 1, "S": 32, "Hq": 4, "Hkv": 2, "D": 16, "window_size": 8, "sink_tokens": 2}]
+        if quick
+        else [{"B": 1, "S": 512, "Hq": 32, "Hkv": 8, "D": 128, "window_size": 128, "sink_tokens": 4}]
+    )
+    base_backends = ["reference", "metal_sliding_window", "metal_sliding_window_sink"]
+    for shape in shapes:
+        B, S, Hq, Hkv, D = shape["B"], shape["S"], shape["Hq"], shape["Hkv"], shape["D"]
+        Q = mx.random.normal((B, S, Hq, D)).astype(dtype)
+        K = mx.random.normal((B, S, Hkv, D)).astype(dtype)
+        V = mx.random.normal((B, S, Hkv, D)).astype(dtype)
+        backends = _choose_backends("sparse_gqa_attention", shape, dtype_name, "metal_sliding_window", use_autotune, extra={"window_size": shape["window_size"], "sink_tokens": shape["sink_tokens"]}, candidates=base_backends)
+        for backend in backends:
+            sink_tokens = shape["sink_tokens"] if backend == "metal_sliding_window_sink" else 0
+            pattern = SparseAttentionPattern(
+                pattern="sliding_window_sink" if sink_tokens > 0 else "sliding_window",
+                window_size=shape["window_size"],
+                sink_tokens=sink_tokens,
+            )
+            _run(results, "sparse_attention", "sparse_gqa_attention", backend, dtype_name, shape, lambda b=backend, q=Q, k=K, v=V, p=pattern: time_fn(lambda: sparse_gqa_attention(q, k, v, p, backend=b), warmup=3, iters=iters), fail_fast)
+
+
+def _sparse_decode_attention_cases(results, dtype, dtype_name, quick, iters, fail_fast, use_autotune):
+    shapes = (
+        [{"B": 1, "MAX_S": 32, "length": 32, "Hq": 4, "Hkv": 2, "D": 16, "window_size": 8, "sink_tokens": 2}]
+        if quick
+        else [{"B": 1, "MAX_S": 4096, "length": 4096, "Hq": 32, "Hkv": 8, "D": 128, "window_size": 512, "sink_tokens": 4}]
+    )
+    base_backends = ["reference", "metal_sliding_window", "metal_sliding_window_sink"]
+    for shape in shapes:
+        B, MAX_S, Hq, Hkv, D = shape["B"], shape["MAX_S"], shape["Hq"], shape["Hkv"], shape["D"]
+        q = mx.random.normal((B, 1, Hq, D)).astype(dtype)
+        K_cache = mx.random.normal((B, MAX_S, Hkv, D)).astype(dtype)
+        V_cache = mx.random.normal((B, MAX_S, Hkv, D)).astype(dtype)
+        backends = _choose_backends("sparse_gqa_decode_attention", shape, dtype_name, "metal_sliding_window", use_autotune, extra={"window_size": shape["window_size"], "sink_tokens": shape["sink_tokens"], "length": shape["length"]}, candidates=base_backends)
+        for backend in backends:
+            sink_tokens = shape["sink_tokens"] if backend == "metal_sliding_window_sink" else 0
+            pattern = SparseAttentionPattern(
+                pattern="sliding_window_sink" if sink_tokens > 0 else "sliding_window",
+                window_size=shape["window_size"],
+                sink_tokens=sink_tokens,
+            )
+            _run(results, "sparse_decode_attention", "sparse_gqa_decode_attention", backend, dtype_name, shape, lambda b=backend, qq=q, kk=K_cache, vv=V_cache, p=pattern, ll=shape["length"]: time_fn(lambda: sparse_gqa_decode_attention(qq, kk, vv, ll, p, backend=b), warmup=3, iters=iters), fail_fast)
+
+
 def _simdgroup_attention_cases(results, dtype, dtype_name, quick, iters):
     shapes = [{"B": 1, "S": 32, "H": 4, "D": 64, "causal": False}] if quick else [
         {"B": 1, "S": 128, "H": 8, "D": 64, "causal": False},
@@ -714,6 +761,8 @@ def main():
     _fused_quantized_mlp_cases(results, dtype, args.dtype, quick, iters, args.fail_fast, args.use_autotune)
     _gqa_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _gqa_prefill_cases(results, dtype, args.dtype, quick, iters, args.fail_fast, args.use_autotune)
+    _sparse_attention_cases(results, dtype, args.dtype, quick, iters, args.fail_fast, args.use_autotune)
+    _sparse_decode_attention_cases(results, dtype, args.dtype, quick, iters, args.fail_fast, args.use_autotune)
     _threadgroup_attention_v2_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _simdgroup_attention_cases(results, dtype, args.dtype, quick, iters)
     _toy_transformer_decode_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)

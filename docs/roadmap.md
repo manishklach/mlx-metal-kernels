@@ -38,9 +38,11 @@ This repo is evolving as an experimental Apple Silicon MLX/Metal kernel lab for 
 - [x] Tokenizer/checkpoint package alignment
 - [x] Local real-model smoke test
 - [ ] Quantized package tensor-data writer
-- [ ] Paged prefill
-- [ ] Chat-template scaffold
-- [ ] Local package tensor-data loader
+- [x] Sparse and sliding-window GQA attention kernels
+- [ ] Prefix KV-cache reuse and cache matching
+- [ ] Speculative decoding / MTP scaffold
+- [ ] Flash/NAND KV offload tier
+- [ ] Quantized KV-cache attention
 
 ## Development pattern
 
@@ -237,20 +239,34 @@ The intended workflow for each new primitive is:
 - extend the metadata-only package format toward optional tensor payload support
 - keep the initial scope focused on deterministic local packaging and loading
 
-### v0.36 paged prefill
+### v0.36 sparse and sliding-window GQA attention kernels
 
-- extend prefill from contiguous-only cache filling toward paged KV-cache support
-- keep continuation semantics and validation explicit before broadening defaults
+- [x] reference sparse attention masks
+- [x] sparse GQA/MQA/MHA reference attention
+- [x] sliding-window prefill Metal kernel
+- [x] sliding-window decode Metal kernel
+- [x] sink-token sparse attention path
+- [x] sparse benchmarks and documentation
 
-### v0.37 chat-template scaffold
+### v0.37 prefix KV-cache reuse and cache matching
 
-- add a minimal local chat-template boundary once tokenizer/package metadata is more stable
-- keep model-specific prompt formatting claims out of scope until local smoke tests exist
+- explore prefix-cache reuse and cache identity checks for repeated prompts
+- keep reuse policy explicit and correctness-first
 
-### v0.38 local package tensor-data loader
+### v0.38 speculative decoding / MTP scaffold
 
-- load repo-native quantized package tensor data into runtime weights when the file format is ready
-- keep metadata-only packages clearly non-executable until this path is implemented
+- add a narrow speculative-decoding or multi-token-prediction scaffold
+- keep model-quality and acceptance-rate claims out of scope until local validation exists
+
+### v0.39 Flash/NAND KV offload tier
+
+- explore explicit KV offload tiers for very long contexts
+- keep storage/memory movement visible and benchmarkable
+
+### v0.40 quantized KV-cache attention
+
+- extend sparse and decode experiments toward quantized KV-cache reads
+- keep accuracy, layout, and bandwidth tradeoffs explicit
 
 ## Long-term goal
 

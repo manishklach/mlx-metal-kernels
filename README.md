@@ -59,6 +59,7 @@ Performance claims should only be made from benchmark data generated on a specif
 - Baseline custom Metal streaming attention
 - Row-parallel attention
 - Tiled K/V attention
+- Sparse sliding-window GQA/MQA attention
 - Threadgroup attention v2
 - Shape-specialized D=64/D=128 attention
 - Experimental `simdgroup_d64` attention
@@ -149,6 +150,7 @@ Current capabilities include:
 - toy transformer-layer decode benchmark
 - Llama-like config, weight layout, and model-adapter scaffolding
 - GQA/MQA reference and composed decode support
+- sparse and sliding-window GQA/MQA attention experiments
 - opt-in backend autotuning for local Apple Silicon machines
 
 Stable defaults remain conservative. Experimental backends such as threadgroup, tiled, specialized, and simdgroup kernels are explicit-only unless enabled through documented flags or autotuning.
@@ -249,6 +251,33 @@ python benchmarks/bench_decode_block.py --B 2 --MAX_S 128 --T 32 --H 8 --D 64 --
 python benchmarks/bench_gqa_decode_attention.py --B 1 --MAX_S 128 --Hq 32 --Hkv 8 --D 128 --dtype float16 --cache contiguous --backend all
 python benchmarks/bench_gqa_decode_block.py --B 1 --MAX_S 128 --Hq 32 --Hkv 8 --D 128 --T 16 --dtype float16 --cache contiguous
 python benchmarks/bench_gqa_attention.py --B 1 --S 128 --Hq 32 --Hkv 8 --D 128 --dtype float16 --causal --backend all --validate
+```
+
+## Sparse and sliding-window attention
+
+The repo includes experimental GQA/MQA-aware sparse attention paths for long-context inference, including sliding-window attention and sink-token patterns.
+
+Current scope:
+
+- reference sparse GQA attention
+- sliding-window GQA prefill Metal kernel
+- sliding-window GQA decode Metal kernel
+- sink-token support
+- GQA/MQA/MHA tests
+- benchmarks against dense and sparse reference paths
+
+Out of scope:
+
+- production sparse-attention policy
+- automatic sparse routing
+- block-sparse optimized Metal backend unless implemented
+- model-quality claims
+
+Commands:
+
+```bash
+python benchmarks/bench_sparse_attention.py --B 1 --S 512 --Hq 32 --Hkv 8 --D 128 --window-size 128 --sink-tokens 4 --dtype float16 --backend all --validate
+python benchmarks/bench_sparse_decode_attention.py --B 1 --MAX_S 4096 --length 4096 --Hq 32 --Hkv 8 --D 128 --window-size 512 --sink-tokens 4 --dtype float16 --backend all --validate
 ```
 
 ### Quantization

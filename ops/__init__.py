@@ -128,6 +128,14 @@ from .quantized_decode_block_ops import (
     reference_quantized_qkv_projection,
 )
 from .rope_ops import apply_rope, reference_apply_rope
+from .sparse_attention_ops import (
+    SparseAttentionPattern,
+    build_sparse_attention_mask,
+    reference_sparse_gqa_attention,
+    reference_sparse_gqa_decode_attention,
+    sparse_gqa_attention,
+    sparse_gqa_decode_attention,
+)
 from .toy_transformer_ops import (
     paged_toy_transformer_decode_layer,
     reference_paged_toy_transformer_decode_layer,
@@ -223,6 +231,12 @@ __all__ = [
     "rmsnorm_residual",
     "swiglu",
     "swiglu_down_project",
+    "SparseAttentionPattern",
+    "build_sparse_attention_mask",
+    "reference_sparse_gqa_attention",
+    "reference_sparse_gqa_decode_attention",
+    "sparse_gqa_attention",
+    "sparse_gqa_decode_attention",
     "toy_transformer_decode_layer",
     "unpack_q4_reference",
     "validate_gqa_heads",

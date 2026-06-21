@@ -36,6 +36,22 @@ BACKEND_REGISTRY = {
             "metal_gqa_threadgroup",
         ],
     },
+    "sparse_gqa_attention": {
+        "function": "ops.sparse_attention_ops.sparse_gqa_attention",
+        "reference_backend": "reference",
+        "candidate_backends": [
+            "metal_sliding_window",
+            "metal_sliding_window_sink",
+        ],
+    },
+    "sparse_gqa_decode_attention": {
+        "function": "ops.sparse_attention_ops.sparse_gqa_decode_attention",
+        "reference_backend": "reference",
+        "candidate_backends": [
+            "metal_sliding_window",
+            "metal_sliding_window_sink",
+        ],
+    },
     "paged_decode_attention": {
         "function": "ops.paged_kv_ops.paged_decode_attention",
         "reference_backend": "reference",
@@ -109,6 +125,8 @@ _EXPERIMENTAL_BACKENDS = {
     "simdgroup_d64",
     "metal_threadgroup",
     "metal_gqa_threadgroup",
+    "metal_sliding_window",
+    "metal_sliding_window_sink",
     "metal_tiled",
     "fused_experimental",
 }
@@ -204,6 +222,19 @@ def filter_backends_for_shape(op_name: str, shape: dict, dtype, backends) -> lis
             hq = shape.get("Hq")
             hkv = shape.get("Hkv")
             if backend != "reference" and (hq is None or hkv is None or hq < hkv or hq % hkv != 0):
+                continue
+            if backend != "reference" and dim is not None and dim > 128:
+                continue
+        if op_name in ("sparse_gqa_attention", "sparse_gqa_decode_attention"):
+            hq = shape.get("Hq")
+            hkv = shape.get("Hkv")
+            window_size = shape.get("window_size")
+            sink_tokens = shape.get("sink_tokens", 0)
+            if backend != "reference" and (hq is None or hkv is None or hq < hkv or hq % hkv != 0):
+                continue
+            if window_size is None or window_size <= 0:
+                continue
+            if sink_tokens < 0:
                 continue
             if backend != "reference" and dim is not None and dim > 128:
                 continue
