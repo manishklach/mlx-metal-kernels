@@ -142,6 +142,17 @@ def _clone_stack_cache_safe(stack_cache):
     return _csc(stack_cache)
 
 
+def _copy_prefix_cache_safe(src_cache, dst_cache, length: int):
+    try:
+        from ops.kv_cache_reuse_ops import copy_prefix_cache_into as _copy
+    except ImportError:
+        raise RuntimeError(
+            "Prefix KV-cache reuse requires mlx. "
+            "Install mlx and ensure the ops package can be loaded."
+        ) from None
+    return _copy(src_cache, dst_cache, length)
+
+
 def prefill_with_prefix_reuse(
     token_ids: list[int],
     model,
@@ -178,25 +189,32 @@ def prefill_with_prefix_reuse(
     fp = fingerprint or compute_fingerprint(model.config, getattr(model, "tokenizer", None))
     match = prefix_cache.lookup(token_ids, fp)
     if match.matched:
-        cache_clone = _clone_stack_cache_safe(match.entry.stack_cache)
-        state = ToyGenerationState(
-            cache=cache_clone,
-            position=match.matched_length,
-            generated_ids=list(token_ids[:match.matched_length]),
-        )
         suffix = match.suffix_token_ids
         if suffix:
+            cache_clone = _clone_stack_cache_safe(match.entry.stack_cache)
+            state = ToyGenerationState(
+                cache=cache_clone,
+                position=match.matched_length,
+                generated_ids=list(token_ids[:match.matched_length]),
+            )
             logits = None
             for token_id in suffix:
                 logits, state = model.decode_step(token_id, state, generation_config=generation_config)
+            suffix_mode = "decode_suffix"
         else:
-            logits, state = model.decode_step(token_ids[-1], state, generation_config=generation_config)
+            replay_length = max(0, match.matched_length - 1)
+            replay_state = model.init_state(B=1, max_seq_len=match.entry.stack_cache.max_seq_len)
+            replay_state.cache = _copy_prefix_cache_safe(match.entry.stack_cache, replay_state.cache, replay_length)
+            replay_state.position = replay_length
+            replay_state.generated_ids = list(token_ids[:replay_length])
+            logits, state = model.decode_step(token_ids[-1], replay_state, generation_config=generation_config)
+            suffix_mode = "replay_last_token"
         metadata = {
             "prefix_cache_hit": True,
             "cache_available": True,
             "matched_length": match.matched_length,
             "suffix_length": len(suffix),
-            "suffix_mode": "decode_step",
+            "suffix_mode": suffix_mode,
         }
         return logits, state, metadata
     logits, updated_state = model.prefill_token_ids(

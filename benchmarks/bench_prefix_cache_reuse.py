@@ -24,11 +24,11 @@ from ops.kv_cache_reuse_ops import clone_stack_cache
 
 def _benchmark_prefill(model, token_ids, gen_config, prefix_cache=None):
     start = time.perf_counter()
-    _, state, meta = prefill_with_prefix_reuse(
+    logits, state, meta = prefill_with_prefix_reuse(
         token_ids, model, prefix_cache=prefix_cache, generation_config=gen_config,
     )
     elapsed = time.perf_counter() - start
-    return elapsed, meta
+    return logits, state, meta, elapsed
 
 
 def run_benchmark(
@@ -48,8 +48,8 @@ def run_benchmark(
     _benchmark_prefill(model, token_ids, gen_config)
 
     if validate:
-        ref_logits, ref_state, _ = _benchmark_prefill(model, token_ids, gen_config, prefix_cache=None)
-        cache_logits, cache_state, cache_meta = _benchmark_prefill(model, token_ids, gen_config, prefix_cache=prefix_cache)
+        ref_logits, ref_state, _, _ = _benchmark_prefill(model, token_ids, gen_config, prefix_cache=None)
+        cache_logits, cache_state, cache_meta, _ = _benchmark_prefill(model, token_ids, gen_config, prefix_cache=prefix_cache)
         print(f"  Validate: cache_hit={cache_meta['prefix_cache_hit']}, matched_length={cache_meta['matched_length']}")
         if cache_meta["prefix_cache_hit"]:
             print("  Cache hit - reuse working correctly")
@@ -58,7 +58,7 @@ def run_benchmark(
         _ = _benchmark_prefill(model, token_ids, gen_config, prefix_cache=None)
         times_cold = []
         for _ in range(iters):
-            t, _ = _benchmark_prefill(model, token_ids, gen_config, prefix_cache=None)
+            _, _, _, t = _benchmark_prefill(model, token_ids, gen_config, prefix_cache=None)
             times_cold.append(t)
         avg_cold = sum(times_cold) / len(times_cold)
         results.append(("cold_prefill", avg_cold, prompt_tokens))
@@ -66,7 +66,7 @@ def run_benchmark(
         _benchmark_prefill(model, reused_ids, gen_config)
         times_warm = []
         for _ in range(iters):
-            t, m = _benchmark_prefill(model, token_ids, gen_config, prefix_cache=prefix_cache)
+            _, _, _, t = _benchmark_prefill(model, token_ids, gen_config, prefix_cache=prefix_cache)
             times_warm.append(t)
         avg_warm = sum(times_warm) / len(times_warm)
         results.append(("warm_reuse", avg_warm, reused_tokens))
@@ -74,7 +74,7 @@ def run_benchmark(
         _benchmark_prefill(model, reused_ids, gen_config)
         times_exact = []
         for _ in range(iters):
-            t, m = _benchmark_prefill(model, reused_ids, gen_config, prefix_cache=prefix_cache)
+            _, _, _, t = _benchmark_prefill(model, reused_ids, gen_config, prefix_cache=prefix_cache)
             times_exact.append(t)
         avg_exact = sum(times_exact) / len(times_exact)
         results.append(("exact_match", avg_exact, reused_tokens))
@@ -87,19 +87,19 @@ def run_benchmark(
         return results
     times_cold = []
     for _ in range(iters):
-        t, _ = _benchmark_prefill(model, token_ids, gen_config, prefix_cache=None)
+        _, _, _, t = _benchmark_prefill(model, token_ids, gen_config, prefix_cache=None)
         times_cold.append(t)
     avg_cold = sum(times_cold) / len(times_cold)
     _benchmark_prefill(model, reused_ids, gen_config)
     times_warm = []
     for _ in range(iters):
-        t, _ = _benchmark_prefill(model, token_ids, gen_config, prefix_cache=prefix_cache)
+        _, _, _, t = _benchmark_prefill(model, token_ids, gen_config, prefix_cache=prefix_cache)
         times_warm.append(t)
     avg_warm = sum(times_warm) / len(times_warm)
     _benchmark_prefill(model, reused_ids, gen_config)
     times_exact = []
     for _ in range(iters):
-        t, _ = _benchmark_prefill(model, reused_ids, gen_config, prefix_cache=prefix_cache)
+        _, _, _, t = _benchmark_prefill(model, reused_ids, gen_config, prefix_cache=prefix_cache)
         times_exact.append(t)
     avg_exact = sum(times_exact) / len(times_exact)
     results = {

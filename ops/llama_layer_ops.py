@@ -148,6 +148,39 @@ def _zero_like_hidden(x):
     return mx.zeros_like(x)
 
 
+def _resolve_mlx_dtype(dtype):
+    if mx is None:
+        return dtype
+    if dtype is None:
+        return mx.float16
+    if hasattr(dtype, "__module__") and str(dtype.__module__).startswith("mlx"):
+        return dtype
+    if isinstance(dtype, str):
+        name = dtype.lower()
+    else:
+        try:
+            import numpy as np
+
+            name = np.dtype(dtype).name.lower()
+        except Exception:  # noqa: BLE001
+            name = str(dtype).lower()
+    mapping = {
+        "float16": mx.float16,
+        "half": mx.float16,
+        "float32": mx.float32,
+        "single": mx.float32,
+        "int32": mx.int32,
+        "int64": mx.int64,
+        "uint32": mx.uint32,
+        "bool": mx.bool_,
+    }
+    if name == "bfloat16" and hasattr(mx, "bfloat16"):
+        return mx.bfloat16
+    if name not in mapping:
+        raise TypeError(f"Unsupported MLX cache dtype: {dtype!r}")
+    return mapping[name]
+
+
 def _normalize_decode_input(x: mx.array, hidden_size: int) -> mx.array:
     if x.ndim != 3 or x.shape[1] != 1 or x.shape[2] != hidden_size:
         raise ValueError(f"x must have shape [B,1,{hidden_size}], got {x.shape}")
@@ -482,11 +515,12 @@ def create_random_quantized_llama_layer_weights(
 
 def init_llama_layer_cache(config, B: int, max_seq_len: int, *, cache_layout: str = "contiguous", dtype=mx.float16, page_size: int = 16):
     config = config.validate()
+    resolved_dtype = _resolve_mlx_dtype(dtype)
     if cache_layout == "contiguous":
         return (
-            mx.zeros((B, max_seq_len, config.num_key_value_heads, config.head_dim), dtype=dtype),
-            mx.zeros((B, max_seq_len, config.num_key_value_heads, config.head_dim), dtype=dtype),
+            mx.zeros((B, max_seq_len, config.num_key_value_heads, config.head_dim), dtype=resolved_dtype),
+            mx.zeros((B, max_seq_len, config.num_key_value_heads, config.head_dim), dtype=resolved_dtype),
         )
     if cache_layout == "paged":
-        return (*allocate_paged_kv_cache(B, max_seq_len, config.num_key_value_heads, config.head_dim, page_size, dtype),)
+        return (*allocate_paged_kv_cache(B, max_seq_len, config.num_key_value_heads, config.head_dim, page_size, resolved_dtype),)
     raise ValueError(f"cache_layout must be 'contiguous' or 'paged', got {cache_layout}")

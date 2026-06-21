@@ -188,7 +188,7 @@ class TinyGenerationPipeline:
             "cache_layout": self.config.cache_layout,
             "use_prefill": self.config.use_prefill,
             "use_prefix_cache": self.config.use_prefix_cache,
-            "prefix_cache_size": len(self.prefix_cache) if self.prefix_cache else 0,
+            "prefix_cache_size": self.prefix_cache.size if self.prefix_cache else 0,
             "bits": self.config.bits,
             "group_size": self.config.group_size,
             "hidden_size": self.llama_config.hidden_size,
@@ -310,13 +310,28 @@ class TinyGenerationPipeline:
             cache_clone = self._clone_stack_cache_safe(match.entry.stack_cache)
             if cache_clone is None:
                 return None
-            state = ToyGenerationState(
-                cache=cache_clone,
-                position=match.matched_length,
-                generated_ids=list(input_ids[:match.matched_length]),
-            )
-            logits = None
-            for token_id in input_ids[match.matched_length:]:
+            suffix = input_ids[match.matched_length:]
+            if suffix:
+                state = ToyGenerationState(
+                    cache=cache_clone,
+                    position=match.matched_length,
+                    generated_ids=list(input_ids[:match.matched_length]),
+                )
+                logits = None
+            else:
+                replay_length = max(0, match.matched_length - 1)
+                replay_state = self.reset_cache(B=1)
+                try:
+                    from ops.kv_cache_reuse_ops import copy_prefix_cache_into
+                except ImportError:
+                    return None
+                replay_state.cache = copy_prefix_cache_into(match.entry.stack_cache, replay_state.cache, replay_length)
+                replay_state.position = replay_length
+                replay_state.generated_ids = list(input_ids[:replay_length])
+                state = replay_state
+                suffix = [input_ids[-1]]
+                logits = None
+            for token_id in suffix:
                 logits, state = self.model.decode_step(token_id, state, generation_config=generation_config)
             return state, logits
         state = self.reset_cache(B=1)
