@@ -64,6 +64,14 @@ from .speculative_cache_ops import (
     commit_accepted_cache,
     discard_suffix,
 )
+from .speculative_verify_ops import (
+    ParallelVerificationConfig,
+    ParallelVerificationPassResult,
+    commit_parallel_verification_cache,
+    embed_proposed_tokens,
+    parallel_verify_tokens,
+    target_tokens_from_verification_logits,
+)
 from .layout_ops import qkv_split, qkv_split_rope, reference_qkv_split, reference_qkv_split_rope
 from .llama_layer_ops import (
     LlamaLayerBackendConfig,
@@ -198,6 +206,12 @@ __all__ = [
     "prefetch_kv_block",
     "commit_accepted_cache",
     "discard_suffix",
+    "ParallelVerificationConfig",
+    "ParallelVerificationPassResult",
+    "commit_parallel_verification_cache",
+    "embed_proposed_tokens",
+    "parallel_verify_tokens",
+    "target_tokens_from_verification_logits",
     "clone_residency_map",
     "apply_rope",
     "decode_attention",

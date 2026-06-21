@@ -990,6 +990,47 @@ def _long_context_runtime_cases(results, dtype, dtype_name, quick, iters, fail_f
         )
 
 
+def _parallel_speculative_verify_cases(results, dtype, dtype_name, quick, iters, fail_fast):
+    if quick:
+        shapes = [{"prompt_len": 4, "max_new_tokens": 4, "draft_length": 2, "num_layers": 1, "hidden_size": 64, "intermediate_size": 128, "num_heads": 4, "num_kv_heads": 2, "head_dim": 16, "vocab_size": 128, "bits": 4}]
+    else:
+        shapes = [
+            {"prompt_len": 8, "max_new_tokens": 16, "draft_length": 4, "num_layers": 2, "hidden_size": 512, "intermediate_size": 2048, "num_heads": 8, "num_kv_heads": 2, "head_dim": 64, "vocab_size": 128, "bits": 4},
+        ]
+    from models.tiny_generation_pipeline import TinyGenerationPipeline, TinyGenerationPipelineConfig
+
+    for shape in shapes:
+        prompt_text = " ".join(str(i) for i in range(shape["prompt_len"]))
+        pipe_cfg = TinyGenerationPipelineConfig(
+            hidden_size=shape["hidden_size"],
+            intermediate_size=shape["intermediate_size"],
+            num_attention_heads=shape["num_heads"],
+            num_key_value_heads=shape["num_kv_heads"],
+            head_dim=shape["head_dim"],
+            num_hidden_layers=shape["num_layers"],
+            max_position_embeddings=shape["prompt_len"] + shape["max_new_tokens"] + 16,
+            vocab_size=shape["vocab_size"],
+            bits=shape["bits"],
+            group_size=32,
+            backend_preset="reference",
+        ).validate()
+        pipeline = TinyGenerationPipeline(config=pipe_cfg)
+        for verifier in ("sequential", "parallel"):
+            _run(
+                results,
+                "parallel_speculative_verify",
+                f"generate_speculative_{verifier}",
+                verifier,
+                dtype_name,
+                shape,
+                lambda p=pipeline, text=prompt_text, mnt=shape["max_new_tokens"], dl=shape["draft_length"], v=verifier: time_fn(
+                    lambda: p.generate_speculative(text, max_new_tokens=mnt, draft_length=dl, draft_mode="fixed", verifier_mode=v),
+                    warmup=1, iters=iters,
+                ),
+                fail_fast,
+            )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--quick", action="store_true")
@@ -1037,6 +1078,7 @@ def main():
     _quantized_kv_decode_attention_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _long_context_runtime_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _speculative_decoding_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
+    _parallel_speculative_verify_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
 
     payload = {
         "system_info": collect_system_info(),

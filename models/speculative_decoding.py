@@ -334,6 +334,70 @@ class PipelineTargetVerifier(TargetVerifier):
         )
 
 
+class ParallelTargetVerifier(TargetVerifier):
+    def __init__(self, pipeline, verification_config=None):
+        self.pipeline = pipeline
+        self.verification_config = verification_config
+
+    def verify(self, context_ids, proposed_token_ids, *, state=None, config=None) -> VerificationResult:
+        _ = state
+        from ops.speculative_verify_ops import (
+            ParallelVerificationConfig,
+            parallel_verify_tokens,
+        )
+
+        vcfg = self.verification_config or ParallelVerificationConfig()
+        if config is not None:
+            from models.speculative_decoding import SpeculativeConfig as SC
+            if isinstance(config, SC):
+                vcfg.draft_length = config.draft_length
+                vcfg.backend_preset = config.backend_preset
+        vcfg = vcfg.validate()
+
+        pipeline_state = None
+        stack_cache = None
+        position = 0
+
+        if hasattr(self.pipeline, "_state") and self.pipeline._state is not None:
+            pipeline_state = self.pipeline._state
+            stack_cache = pipeline_state.cache
+            position = pipeline_state.position
+
+        if stack_cache is None and hasattr(self.pipeline, "model"):
+            embed_test = self.pipeline.model.embed_token_ids([0])
+            if _is_mlx_array(embed_test):
+                cos, sin = self.pipeline.model._get_rope_tables(128)
+            else:
+                from models.llama_config import build_rope_tables
+                try:
+                    cos, sin = build_rope_tables(self.pipeline.llama_config, seq_len=128)
+                except Exception:
+                    cos, sin = None, None
+        else:
+            cos, sin = None, None
+
+        result = parallel_verify_tokens(
+            context_token_ids=list(context_ids),
+            proposed_token_ids=list(proposed_token_ids),
+            pipeline=self.pipeline,
+            verification_config=vcfg,
+        )
+        vr = result.to_verification_result(require_exact_match=True)
+        vr.metadata["verifier"] = "parallel"
+        vr.metadata["verification_path"] = result.metadata.get("verification_path", "decode_loop_staged")
+        vr.metadata["draft_length"] = len(proposed_token_ids)
+        vr.metadata["accepted_count"] = result.accepted_count
+        return vr
+
+
+def _is_mlx_array(value: Any) -> bool:
+    try:
+        import mlx.core as _mx
+        return type(value).__module__.startswith("mlx")
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Speculative generator
 # ---------------------------------------------------------------------------

@@ -382,10 +382,12 @@ class TinyGenerationPipeline:
         draft_mode: str = "fixed",
         greedy_verify: bool = True,
         require_exact_match: bool = True,
+        verifier_mode: str = "sequential",
     ) -> SpeculativeGenerationResult:
         from .speculative_decoding import (
             FixedDraftProposer,
             GreedySelfDraftProposer,
+            ParallelTargetVerifier,
             PipelineTargetVerifier,
             RandomDraftProposer,
             SpeculativeConfig,
@@ -412,14 +414,35 @@ class TinyGenerationPipeline:
             proposer = GreedySelfDraftProposer(self)
         else:
             raise ValueError(f"Unknown draft_mode: {draft_mode!r}")
-        verifier = PipelineTargetVerifier(self)
+        if verifier_mode == "parallel":
+            from ops.speculative_verify_ops import ParallelVerificationConfig
+            vcfg = ParallelVerificationConfig(
+                draft_length=draft_length,
+                backend_preset=self.config.backend_preset,
+                cache_layout=self.config.cache_layout,
+            )
+            verifier = ParallelTargetVerifier(self, verification_config=vcfg)
+        else:
+            verifier = PipelineTargetVerifier(self)
         generator = SpeculativeGenerator(
             self,
             draft_proposer=proposer,
             target_verifier=verifier,
             config=spec_config,
         )
-        return generator.generate_text(prompt, speculative_config=spec_config)
+        result = generator.generate_text(prompt, speculative_config=spec_config)
+        result.metadata["verifier_mode"] = verifier_mode
+        if verifier_mode == "parallel":
+            verifier_paths = [
+                s.verification.metadata.get("verification_path", "unknown")
+                for s in result.steps if hasattr(s.verification, "metadata")
+            ]
+            accepted_counts = [s.accepted_count for s in result.steps]
+            result.metadata["average_accepted"] = float(
+                sum(accepted_counts) / len(accepted_counts)
+            ) if accepted_counts else 0.0
+            result.metadata["verification_path"] = verifier_paths[0] if verifier_paths else "unknown"
+        return result
 
     def generate(
         self,

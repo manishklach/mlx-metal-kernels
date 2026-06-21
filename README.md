@@ -119,6 +119,17 @@ Performance claims should only be made from benchmark data generated on a specif
 - Synthetic MTP scaffold: MTPConfig, SyntheticMTPHead, mtp_propose_tokens
 - Pipeline integration via generate_speculative() (opt-in, existing generate() unchanged)
 
+### Parallel speculative verification (staged decode‑loop)
+
+- `ParallelVerificationConfig`, `ParallelVerificationPassResult`
+- `parallel_verify_tokens` — runs target model on all draft tokens in a staged decode loop, computes accept/reject mask, preserves committed cache isolation via a cloned staged KV‑cache
+- `commit_parallel_verification_cache` — finalises accepted positions into the committed cache
+- `ParallelTargetVerifier` — drop‑in target verifier wrapping the parallel path, usable as `target_verifier` on `SpeculativeGenerator`
+- `generate_speculative(verifier_mode="parallel")` — pipeline entry point (mode="sequential" preserves original behaviour)
+- Benchmark: `python benchmarks/bench_parallel_speculative_verify.py --verifier both` compares sequential vs. parallel verifier latency
+- Demo: `python examples/parallel_speculative_verify_demo.py`
+- **Current limitation**: verification runs as a staged decode loop rather than a true batched prefill, because continuation prefill (`start_position > 0`) is not yet implemented. See `docs/parallel_speculative_verification.md` for details.
+
 ### Flash/NAND KV offload tier scaffold
 
 The repo includes an experimental KV-cache offload scaffold for long-context inference. It tracks hot/resident and cold/offloaded KV blocks, supports in-memory and local file-backed stores, and provides prefetch planning for sparse attention patterns.

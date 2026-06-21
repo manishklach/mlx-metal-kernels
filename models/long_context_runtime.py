@@ -620,3 +620,37 @@ class LongContextRuntime:
             "total_offloaded": sum(r.blocks_offloaded for r in reports),
         }
         return result
+
+    def generate_speculative_long_context(self, prompt, max_new_tokens=8, draft_length=4, verifier_mode="sequential"):
+        """
+        Experimental scaffold: parallel speculative verification for long-context runtime.
+        Currently delegates to TinyGenerationPipeline for the speculative path.
+        Full long-context + speculative integration is future work.
+        """
+        from .tiny_generation_pipeline import TinyGenerationPipeline, TinyGenerationPipelineConfig
+
+        pipe_cfg = TinyGenerationPipelineConfig(
+            hidden_size=self.model_config.hidden_size,
+            intermediate_size=getattr(self.model_config, "intermediate_size", self.model_config.hidden_size * 4),
+            num_attention_heads=self.model_config.num_attention_heads,
+            num_key_value_heads=self.model_config.num_key_value_heads,
+            head_dim=self.model_config.head_dim,
+            num_hidden_layers=self.model_config.num_hidden_layers,
+            max_position_embeddings=self.model_config.max_position_embeddings,
+            vocab_size=self.embedding.shape[0] if hasattr(self.embedding, "shape") else 128,
+            bits=4,
+            group_size=32,
+            dtype="float16",
+            backend_preset=self.runtime_config.backend_preset,
+            cache_layout=self.runtime_config.cache_layout,
+            use_prefill=True,
+            use_prefix_cache=self.runtime_config.use_prefix_cache,
+        )
+        pipe = TinyGenerationPipeline(config=pipe_cfg, tokenizer=self.tokenizer)
+        return pipe.generate_speculative(
+            prompt,
+            max_new_tokens=max_new_tokens,
+            draft_length=draft_length,
+            draft_mode="fixed",
+            verifier_mode=verifier_mode,
+        )

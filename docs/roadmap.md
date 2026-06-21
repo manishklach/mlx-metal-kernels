@@ -43,6 +43,8 @@ This repo is evolving as an experimental Apple Silicon MLX/Metal kernel lab for 
 - [x] Speculative decoding / MTP scaffold
 - [x] Flash/NAND KV offload tier
 - [x] Quantized KV-cache attention
+- [x] Sparse + prefix-cache + offload integration
+- [x] Parallel speculative verification (staged decode‑loop)
 
 ## Development pattern
 
@@ -329,11 +331,40 @@ The intended workflow for each new primitive is:
 - [x] Example demo
 - [x] Documentation and roadmap update
 
-### v0.42
+### v0.42 Parallel speculative verification (staged decode‑loop)
 
-- Parallel speculative verification kernel
+- [x] `ParallelVerificationConfig`, `ParallelVerificationPassResult` — config and structured result types
+- [x] `parallel_verify_tokens` — staged decode‑loop verification over draft tokens with accept/reject mask computation
+- [x] `commit_parallel_verification_cache` — finalises accepted tokens into committed KV‑cache
+- [x] `ParallelTargetVerifier` — drop‑in target verifier wrapping the parallel path
+- [x] `generate_speculative(verifier_mode="parallel")` — pipeline integration
+- [x] `generate_speculative_long_context` — long‑context scaffold with verifier_mode passthrough
+- [x] Tests: config/result types, embed/target‑tokens helpers, verify/commit semantics, pipeline integration
+- [x] Benchmark scaffold: `benchmarks/bench_parallel_speculative_verify.py` with `--verifier both`
+- [x] Example demo: `examples/parallel_speculative_verify_demo.py`
+- [x] Documentation: `docs/parallel_speculative_verification.md`
+- keep model‑quality and acceptance‑rate claims out of scope until local validation exists
+
+### v0.43
+
+- True batched prefill verification (continuation prefill with `start_position > 0`)
+- Paged staged KV‑cache support
+- B>1 support in parallel verification
+
+### v0.44
+
 - Async KV prefetch scheduler
 - Paged quantized KV-cache
+
+### v0.45
+
+- Speculative decoding with real model weights
+- Acceptance‑rate tuning and validation
+
+### v0.46
+
+- Multi‑draft verification (multiple candidate sequences per step)
+- Verification‑based acceptance‑rate benchmarks on real hardware
 
 ## Long-term goal
 

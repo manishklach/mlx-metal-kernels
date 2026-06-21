@@ -143,6 +143,11 @@ BACKEND_REGISTRY = {
         "reference_backend": "reference",
         "candidate_backends": ["fixed_draft", "random_draft"],
     },
+    "parallel_speculative_verify": {
+        "function": "ops.speculative_verify_ops.parallel_verify_tokens",
+        "reference_backend": "reference",
+        "candidate_backends": ["sequential", "parallel"],
+    },
 }
 
 
