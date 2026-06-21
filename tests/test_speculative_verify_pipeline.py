@@ -1,12 +1,6 @@
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
-
-_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT))
 
 
 def _has_mlx():
@@ -18,8 +12,10 @@ def _has_mlx():
 
 
 def _try_create_pipeline():
-    from models.tiny_generation_pipeline import TinyGenerationPipeline, TinyGenerationPipelineConfig
-
+    try:
+        from models.tiny_generation_pipeline import TinyGenerationPipeline, TinyGenerationPipelineConfig
+    except ImportError:
+        pytest.skip("TinyGenerationPipeline requires mlx")
     cfg = TinyGenerationPipelineConfig(
         hidden_size=32,
         intermediate_size=64,
@@ -41,7 +37,6 @@ def _try_create_pipeline():
     return pipe, cfg
 
 
-@pytest.mark.slow
 class TestSpeculativeVerifyPipeline:
     def test_normal_generate_unchanged(self):
         pipe, _ = _try_create_pipeline()

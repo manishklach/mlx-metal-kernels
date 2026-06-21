@@ -178,7 +178,10 @@ def parallel_verify_tokens(
         stack_weights = pipeline.stack_weights
         embedding = pipeline.model.embedding
         lm_head = pipeline.model.lm_head
-        stack_cache = pipeline.model._state.cache if pipeline.model._state is not None else None
+        if hasattr(pipeline, "_state") and pipeline._state is not None:
+            stack_cache = pipeline._state.cache
+            if position is None:
+                position = pipeline._state.position
 
     if verification_config is None:
         verification_config = ParallelVerificationConfig().validate()

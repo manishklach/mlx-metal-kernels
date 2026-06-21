@@ -60,7 +60,7 @@ class TestParallelVerificationPassResult:
             accept_mask=[True, True, False],
             accepted_count=2,
             replacement_token_id=4,
-            target_logits=[[0.1, 0.2, 0.3]],
+            logits=[[0.1, 0.2, 0.3]],
             staged_cache="dummy",
             metadata={"key": "value"},
         )
@@ -76,78 +76,102 @@ class TestParallelVerificationPassResult:
             accept_mask=[True, True, False],
             accepted_count=2,
             replacement_token_id=4,
-            target_logits=None,
+            logits=None,
             staged_cache=None,
         )
         vr = result.to_verification_result()
         assert vr.accepted_count == 2
         assert vr.replacement_token_id == 4
 
-    def test_empty_proposal(self):
+    def test_committed_tokens_all_accepted(self):
         mod = _import_verify_ops()
-        result = mod["ParallelVerificationPassResult"].empty()
-        assert result.accepted_count == 0
-        assert result.replacement_token_id is None
+        result = mod["ParallelVerificationPassResult"](
+            proposed_token_ids=[1, 2],
+            target_token_ids=[1, 2],
+            accept_mask=[True, True],
+            accepted_count=2,
+        )
+        assert result.committed_tokens() == [1, 2]
+
+    def test_committed_tokens_with_replacement(self):
+        mod = _import_verify_ops()
+        result = mod["ParallelVerificationPassResult"](
+            proposed_token_ids=[1, 2, 3],
+            target_token_ids=[1, 2, 4],
+            accept_mask=[True, True, False],
+            accepted_count=2,
+            replacement_token_id=4,
+        )
+        assert result.committed_tokens() == [1, 2, 4]
 
 
 class TestEmbedProposedTokens:
     def test_requires_numpy(self):
         mod = _import_verify_ops()
-        result = mod["embed_proposed_tokens"]([1, 2, 3], embed_dim=8)
-        assert result.shape == (3, 8)
+        embedding = np.zeros((64, 8), dtype=np.float32)
+        result = mod["embed_proposed_tokens"]([1, 2, 3], embedding)
+        assert result.shape == (1, 3, 8)
 
     def test_empty_raises(self):
         mod = _import_verify_ops()
+        embedding = np.zeros((64, 8), dtype=np.float32)
         with pytest.raises((ValueError, AssertionError)):
-            mod["embed_proposed_tokens"]([], embed_dim=8)
+            mod["embed_proposed_tokens"]([], embedding)
 
 
 class TestTargetTokensFromLogits:
     def test_greedy_argmax(self):
         mod = _import_verify_ops()
-        logits = np.array([[0.1, 0.9, 0.2], [0.8, 0.1, 0.1]], dtype=np.float32)
-        tokens = mod["target_tokens_from_verification_logits"](logits)
+        logits = [np.array([0.1, 0.9, 0.2], dtype=np.float32), np.array([0.8, 0.1, 0.1], dtype=np.float32)]
+        tokens = mod["target_tokens_from_verification_logits"](logits, proposed_token_ids=[1, 2])
         assert tokens == [1, 0]
 
     def test_empty_logits(self):
         mod = _import_verify_ops()
-        logits = np.empty((0, 3), dtype=np.float32)
-        tokens = mod["target_tokens_from_verification_logits"](logits)
+        tokens = mod["target_tokens_from_verification_logits"]([], proposed_token_ids=[])
         assert tokens == []
 
 
 class TestParallelVerifyTokens:
-    def test_empty_proposal(self):
+    def test_empty_proposal_returns_empty_result(self):
         mod = _import_verify_ops()
-        with pytest.raises((ValueError, AssertionError)):
-            mod["parallel_verify_tokens"](
-                proposed_token_ids=[],
-                stack_cache="dummy",
-                position=0,
-                decode_step_fn=lambda *a: None,
-                model=None,
-            )
+        try:
+            from ops.llama_stack_ops import LlamaStackCache
+            cache = LlamaStackCache(layer_caches=[], cache_layout="contiguous", max_seq_len=1)
+        except ImportError:
+            pytest.skip("llama_stack_ops require mlx")
+        result = mod["parallel_verify_tokens"](
+            context_token_ids=[0],
+            proposed_token_ids=[],
+            stack_cache=cache,
+            position=0,
+        )
+        assert result.accepted_count == 0
+        assert result.metadata.get("verification_path") == "no_proposed_tokens"
 
     def test_requires_stack_cache(self):
         mod = _import_verify_ops()
-        with pytest.raises((ValueError, AssertionError, TypeError)):
+        with pytest.raises((ValueError, AssertionError)):
             mod["parallel_verify_tokens"](
+                context_token_ids=[0],
                 proposed_token_ids=[1],
                 stack_cache=None,
                 position=0,
-                decode_step_fn=lambda *a: None,
-                model=None,
             )
 
     def test_requires_position(self):
         mod = _import_verify_ops()
-        with pytest.raises((ValueError, AssertionError, TypeError)):
+        try:
+            from ops.llama_stack_ops import LlamaStackCache
+            cache = LlamaStackCache(layer_caches=[], cache_layout="contiguous", max_seq_len=1)
+        except ImportError:
+            pytest.skip("llama_stack_ops require mlx")
+        with pytest.raises((ValueError, AssertionError)):
             mod["parallel_verify_tokens"](
+                context_token_ids=[0],
                 proposed_token_ids=[1],
-                stack_cache="dummy",
+                stack_cache=cache,
                 position=None,
-                decode_step_fn=lambda *a: None,
-                model=None,
             )
 
 
