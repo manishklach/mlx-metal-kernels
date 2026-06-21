@@ -125,6 +125,20 @@ def cache_prefix_equal(
     return True
 
 
+def clone_residency_map(residency_map):
+    """Return a deep-ish copy of a KVResidencyMap for safe mutation.
+
+    This is a lightweight clone: block metadata dict values are copied
+    via ``to_dict()`` / ``from_dict()`` roundtrip.
+    """
+    from models.kv_offload import KVBlockMetadata, KVResidencyMap
+    cloned = KVResidencyMap()
+    for key, meta in residency_map.blocks.items():
+        d = meta.to_dict()
+        cloned.add_block(KVBlockMetadata.from_dict(d))
+    return cloned
+
+
 def paged_cache_reuse_not_implemented():
     raise NotImplementedError(
         "Prefix KV-cache reuse currently supports only contiguous cache layout. "

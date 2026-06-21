@@ -761,6 +761,70 @@ def _prefix_cache_reuse_cases(results, dtype, dtype_name, quick, iters, fail_fas
         )
 
 
+def _kv_offload_tier_cases(results, dtype, dtype_name, quick, iters, fail_fast):
+    if quick:
+        shapes = [{"seq_len": 256, "block_size": 64, "num_layers": 1, "num_kv_heads": 2, "head_dim": 16}]
+    else:
+        shapes = [
+            {"seq_len": 256, "block_size": 64, "num_layers": 1, "num_kv_heads": 2, "head_dim": 16},
+            {"seq_len": 4096, "block_size": 128, "num_layers": 2, "num_kv_heads": 8, "head_dim": 128},
+        ]
+    import numpy as np
+    from models.kv_offload import KVResidencyMap, partition_sequence_into_blocks
+    from models.kv_offload_policy import KVOffloadPolicyConfig, plan_offload_blocks
+    from models.kv_offload_store import InMemoryKVOffloadStore
+    from ops.kv_offload_ops import apply_offload_plan
+
+    for shape in shapes:
+        rng = np.random.default_rng(0)
+        seq_len = shape["seq_len"]
+        block_size = shape["block_size"]
+        num_layers = shape["num_layers"]
+        num_kv_heads = shape["num_kv_heads"]
+        head_dim = shape["head_dim"]
+
+        caches = []
+        for layer in range(num_layers):
+            K = rng.normal(0, 0.02, (1, seq_len, num_kv_heads, head_dim)).astype(np.float32)
+            V = rng.normal(0, 0.02, (1, seq_len, num_kv_heads, head_dim)).astype(np.float32)
+            caches.append((K, V))
+
+        rmap = KVResidencyMap()
+        for layer in range(num_layers):
+            blocks = partition_sequence_into_blocks(
+                layer_idx=layer, batch_idx=0,
+                seq_len=seq_len, block_size=block_size,
+                num_kv_heads=num_kv_heads, head_dim=head_dim,
+                dtype="float32",
+            )
+            for b in blocks:
+                rmap.add_block(b)
+
+        store = InMemoryKVOffloadStore()
+        policy = KVOffloadPolicyConfig(
+            block_size=block_size,
+            keep_sink_blocks=1,
+            keep_recent_blocks=2,
+            max_resident_blocks=max(1, (seq_len // block_size) // 2),
+        ).validate()
+
+        plan = plan_offload_blocks(rmap, current_position=seq_len - 1, policy_config=policy)
+        _run(
+            results,
+            "kv_offload_tier",
+            "apply_offload_plan",
+            "memory",
+            dtype_name,
+            shape,
+            lambda cs=caches, rm=rmap, st=store, pl=plan: time_fn(
+                lambda: apply_offload_plan(cs, rm, st, pl),
+                warmup=1,
+                iters=iters,
+            ),
+            fail_fast,
+        )
+
+
 def _speculative_decoding_cases(results, dtype, dtype_name, quick, iters, fail_fast):
     if quick:
         shapes = [{"prompt_tokens": 4, "max_new_tokens": 4, "draft_length": 2}]
@@ -857,6 +921,7 @@ def main():
     _llama_stack_prefill_cases(results, dtype, args.dtype, quick, iters, args.fail_fast, args.use_autotune)
     _tiny_generation_pipeline_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _prefix_cache_reuse_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
+    _kv_offload_tier_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _speculative_decoding_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
 
     payload = {

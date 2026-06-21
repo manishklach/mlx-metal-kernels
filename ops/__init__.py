@@ -43,9 +43,17 @@ from .kv_cache_ops import kv_cache_update, reference_kv_cache_update
 from .kv_cache_reuse_ops import (
     cache_prefix_equal,
     clone_layer_cache,
+    clone_residency_map,
     clone_stack_cache,
     copy_prefix_cache_into,
     slice_layer_cache,
+)
+from .kv_offload_ops import (
+    apply_offload_plan,
+    extract_kv_block,
+    insert_kv_block,
+    offload_kv_block,
+    prefetch_kv_block,
 )
 from .speculative_cache_ops import (
     commit_accepted_cache,
@@ -155,8 +163,14 @@ from .toy_transformer_ops import (
 )
 
 __all__ = [
+    "apply_offload_plan",
+    "extract_kv_block",
+    "insert_kv_block",
+    "offload_kv_block",
+    "prefetch_kv_block",
     "commit_accepted_cache",
     "discard_suffix",
+    "clone_residency_map",
     "apply_rope",
     "decode_attention",
     "decode_block_from_qkv",

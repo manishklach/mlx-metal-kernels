@@ -119,6 +119,35 @@ Performance claims should only be made from benchmark data generated on a specif
 - Synthetic MTP scaffold: MTPConfig, SyntheticMTPHead, mtp_propose_tokens
 - Pipeline integration via generate_speculative() (opt-in, existing generate() unchanged)
 
+### Flash/NAND KV offload tier scaffold
+
+The repo includes an experimental KV-cache offload scaffold for long-context inference. It tracks hot/resident and cold/offloaded KV blocks, supports in-memory and local file-backed stores, and provides prefetch planning for sparse attention patterns.
+
+Current scope:
+
+- KV block metadata
+- residency maps
+- in-memory offload store
+- file-backed `.npy` offload store
+- offload/prefetch operations
+- sparse-attention residency guard
+- simulated benchmark
+
+Out of scope:
+
+- production SSD streaming
+- DMA
+- async IO scheduler
+- automatic offload policy in generation
+- model-quality claims
+
+Commands:
+```
+python examples/kv_offload_demo.py
+python examples/sparse_kv_offload_demo.py
+python benchmarks/bench_kv_offload_tier.py --seq-len 4096 --block-size 128 --num-layers 2 --num-kv-heads 8 --head-dim 128 --store memory --offload-ratio 0.75 --window-size 512 --sink-tokens 4
+```
+
 ### Benchmarking and autotuning
 
 - Unified benchmark runner

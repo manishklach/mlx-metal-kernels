@@ -277,10 +277,23 @@ The intended workflow for each new primitive is:
 - [x] Documentation and roadmap update
 - keep model-quality and acceptance-rate claims out of scope until local validation exists
 
-### v0.39 Flash/NAND KV offload tier
+### v0.39 Flash/NAND KV offload tier scaffold
 
-- explore explicit KV offload tiers for very long contexts
-- keep storage/memory movement visible and benchmarkable
+- [x] KVBlockId, KVBlockMetadata, KVResidencyMap — block metadata and tracking
+- [x] `partition_sequence_into_blocks`, `token_positions_to_block_ids` — partitioning helpers
+- [x] `InMemoryKVOffloadStore`, `FileKVOffloadStore` (npy-backed) — offload stores
+- [x] `KVOffloadPolicyConfig`, `KVOffloadPlan` — offload policy types
+- [x] `plan_offload_blocks` — sink/recent/max-resident policy
+- [x] `plan_prefetch_for_sparse_attention` — prefetch planning for sparse patterns
+- [x] `extract_kv_block`, `insert_kv_block`, `offload_kv_block`, `prefetch_kv_block` — offload operations
+- [x] `apply_offload_plan` — batch offload/prefetch execution
+- [x] `ensure_sparse_blocks_resident` — hard guard against attending to offloaded blocks
+- [x] `sparse_positions_for_decode` — determine needed token positions for sparse decode
+- [x] `clone_residency_map` — prefix-cache integration helper
+- [x] Test coverage: metadata, store, policy, ops, sparse integration (5 test files)
+- [x] Benchmark scaffold and examples
+- [x] Documentation and roadmap update
+- scaffold only; no real async IO, DMA, or automatic runtime offload
 
 ### v0.40 quantized KV-cache attention
 

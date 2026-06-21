@@ -233,6 +233,77 @@ def reference_sparse_gqa_attention(
     return _dense_masked_reference_attention(Q, K, V, mask, scale=float(scale))
 
 
+def ensure_sparse_blocks_resident(
+    residency_map,
+    *,
+    layer_idx: int,
+    batch_idx: int,
+    needed_positions: list[int],
+    block_size: int,
+) -> None:
+    """Raise RuntimeError if any needed block for sparse attention is offloaded/non-resident."""
+    try:
+        from models.kv_offload import token_positions_to_block_ids
+    except ImportError:
+        return
+    needed_block_ids = token_positions_to_block_ids(
+        needed_positions,
+        layer_idx=layer_idx,
+        batch_idx=batch_idx,
+        block_size=block_size,
+    )
+    missing: list[str] = []
+    for bid in needed_block_ids:
+        meta = residency_map.get(bid)
+        if meta is None:
+            continue
+        if not meta.resident:
+            missing.append(bid.to_string())
+    if missing:
+        raise RuntimeError(
+            f"Sparse attention requires {len(missing)} resident block(s) "
+            f"that are currently offloaded: {missing}. "
+            "Prefetch blocks before calling sparse attention."
+        )
+
+
+def sparse_positions_for_decode(length: int, pattern) -> list[int]:
+    """Return the set of KV positions needed for a single decode step.
+
+    Given a sequence so far of `length` tokens, return the K/V positions
+    that a query at position ``length - 1`` (or ``length``) will attend to
+    under the given sparse attention pattern.
+    """
+    from .sparse_attention_ops import SparseAttentionPattern
+    if isinstance(pattern, dict):
+        pattern = SparseAttentionPattern(**pattern)
+    if not isinstance(pattern, SparseAttentionPattern):
+        raise TypeError("pattern must be a SparseAttentionPattern")
+
+    q_pos = length - 1
+    if q_pos < 0:
+        return []
+
+    positions: set[int] = set()
+    if pattern.pattern == "dense":
+        positions.update(range(length))
+    elif pattern.pattern in ("sliding_window", "sliding_window_sink"):
+        window = int(pattern.window_size or 0)
+        local_start = max(0, q_pos - window + 1)
+        for pos in range(local_start, length):
+            positions.add(pos)
+        if pattern.pattern == "sliding_window_sink":
+            sink = min(int(pattern.sink_tokens), length)
+            for pos in range(sink):
+                positions.add(pos)
+    elif pattern.pattern == "block_sparse":
+        positions.update(range(length))
+    else:
+        positions.update(range(length))
+
+    return sorted(positions)
+
+
 def reference_sparse_gqa_decode_attention(
     q,
     K_cache,

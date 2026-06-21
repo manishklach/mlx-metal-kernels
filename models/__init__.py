@@ -44,6 +44,20 @@ from .generation import (
     create_synthetic_generation_model,
     create_synthetic_stack_generation_model,
 )
+from .kv_offload import (
+    KVBlockId,
+    KVBlockMetadata,
+    KVResidencyMap,
+    partition_sequence_into_blocks,
+    token_positions_to_block_ids,
+)
+from .kv_offload_policy import (
+    KVOffloadPlan,
+    KVOffloadPolicyConfig,
+    plan_offload_blocks,
+    plan_prefetch_for_sparse_attention,
+)
+from .kv_offload_store import FileKVOffloadStore, InMemoryKVOffloadStore, KVOffloadStore
 from .mtp import MTPConfig, SyntheticMTPHead, mtp_propose_tokens
 from .speculative_decoding import (
     DraftProposal,
@@ -258,6 +272,18 @@ __all__ = [
     "validate_tokenizer_against_package",
     "validate_weight_shapes",
     "WhitespaceTokenizer",
+    "KVBlockId",
+    "KVBlockMetadata",
+    "KVResidencyMap",
+    "partition_sequence_into_blocks",
+    "token_positions_to_block_ids",
+    "KVOffloadStore",
+    "InMemoryKVOffloadStore",
+    "FileKVOffloadStore",
+    "KVOffloadPolicyConfig",
+    "KVOffloadPlan",
+    "plan_offload_blocks",
+    "plan_prefetch_for_sparse_attention",
     "SpeculativeConfig",
     "SpeculativeGenerationResult",
     "SpeculativeGenerator",
