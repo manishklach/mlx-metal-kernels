@@ -147,7 +147,34 @@ python examples/kv_offload_demo.py
 python examples/sparse_kv_offload_demo.py
 python benchmarks/bench_kv_offload_tier.py --seq-len 4096 --block-size 128 --num-layers 2 --num-kv-heads 8 --head-dim 128 --store memory --offload-ratio 0.75 --window-size 512 --sink-tokens 4
 ```
-
+ 
+### Quantized KV-cache attention
+ 
+The repo includes experimental q8/q4 KV-cache decode attention paths. K/V cache values can be stored in quantized form with per-token/head/group scales and dequantized inside GQA/MQA decode attention.
+ 
+Current scope:
+ 
+- q8 KV-cache quantization
+- q4 packed KV-cache quantization
+- reference quantized KV decode attention
+- experimental Metal q8/q4 GQA decode attention
+- GQA/MQA/MHA tests
+- memory/compression benchmarks
+ 
+Out of scope:
+ 
+- production KV quantization policy
+- paged quantized KV-cache
+- automatic runtime routing
+- model-quality claims
+ 
+Commands:
+```
+python examples/quantized_kv_decode_demo.py
+python benchmarks/bench_quantized_kv_decode_attention.py --bits 8 --B 1 --MAX_S 4096 --length 4096 --Hq 32 --Hkv 8 --D 128 --group-size 32 --backend all --validate --compare-fp16
+python benchmarks/bench_quantized_kv_decode_attention.py --bits 4 --B 1 --MAX_S 4096 --length 4096 --Hq 32 --Hkv 8 --D 128 --group-size 32 --backend all --validate --compare-fp16
+```
+ 
 ### Benchmarking and autotuning
 
 - Unified benchmark runner
@@ -925,6 +952,6 @@ Experimental backends may be disabled by default until they are repeatedly valid
 - [x] Checkpoint layout loader scaffold
 - [x] Full tiny-model generation demo
 - [x] Optimized prefill stack
-- [ ] Optimized GQA Metal decode attention
-- [ ] Fused q4 MLP kernel
+- [x] Optimized GQA Metal decode attention
+- [x] Fused q4 MLP kernel
 - [x] Real checkpoint adapter scaffold

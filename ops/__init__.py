@@ -121,6 +121,17 @@ from .paged_kv_ops import (
     reference_paged_decode_step,
     reference_paged_kv_cache_update,
 )
+from .quantized_kv_cache_ops import (
+    QuantizedKVCacheConfig,
+    QuantizedKVCache,
+    quantize_kv_cache,
+    dequantize_kv_cache,
+    quantized_kv_error,
+    quantized_kv_gqa_decode_attention,
+    reference_quantized_kv_gqa_decode_attention,
+    reference_quantized_kv_sparse_gqa_decode_attention,
+    quantized_kv_sparse_gqa_decode_attention,
+)
 from .quant_ops import (
     dequant_q4,
     dequant_q8,
@@ -163,6 +174,15 @@ from .toy_transformer_ops import (
 )
 
 __all__ = [
+    "QuantizedKVCacheConfig",
+    "QuantizedKVCache",
+    "quantize_kv_cache",
+    "dequantize_kv_cache",
+    "quantized_kv_error",
+    "quantized_kv_gqa_decode_attention",
+    "reference_quantized_kv_gqa_decode_attention",
+    "reference_quantized_kv_sparse_gqa_decode_attention",
+    "quantized_kv_sparse_gqa_decode_attention",
     "apply_offload_plan",
     "extract_kv_block",
     "insert_kv_block",

@@ -125,6 +125,14 @@ BACKEND_REGISTRY = {
         "reference_backend": "reference",
         "candidate_backends": ["memory", "file"],
     },
+    "quantized_kv_decode_attention": {
+        "function": "ops.quantized_kv_cache_ops.quantized_kv_gqa_decode_attention",
+        "reference_backend": "reference",
+        "candidate_backends": [
+            "metal_q8",
+            "metal_q4",
+        ],
+    },
     "speculative_decoding": {
         "function": "models.speculative_decoding.SpeculativeGenerator.generate_ids",
         "reference_backend": "reference",
@@ -144,6 +152,8 @@ _EXPERIMENTAL_BACKENDS = {
     "metal_sliding_window_sink",
     "metal_tiled",
     "fused_experimental",
+    "metal_q8",
+    "metal_q4",
 }
 
 
@@ -250,6 +260,18 @@ def filter_backends_for_shape(op_name: str, shape: dict, dtype, backends) -> lis
             if window_size is None or window_size <= 0:
                 continue
             if sink_tokens < 0:
+                continue
+            if backend != "reference" and dim is not None and dim > 128:
+                continue
+        if op_name == "quantized_kv_decode_attention":
+            bits = shape.get("bits")
+            hq = shape.get("Hq")
+            hkv = shape.get("Hkv")
+            if backend not in ("reference",) and (hq is None or hkv is None or hq < hkv or hq % hkv != 0):
+                continue
+            if backend == "metal_q8" and bits not in (None, 8):
+                continue
+            if backend == "metal_q4" and bits not in (None, 4):
                 continue
             if backend != "reference" and dim is not None and dim > 128:
                 continue

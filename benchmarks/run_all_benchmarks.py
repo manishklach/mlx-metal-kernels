@@ -23,6 +23,7 @@ from ops.mlp_block_ops import quantized_mlp_block, reference_quantized_mlp_block
 from ops.norm_ops import rms_norm
 from ops.paged_kv_ops import allocate_paged_kv_cache, paged_decode_attention
 from ops.quant_ops import dequant_q4, dequant_q8, pack_q4, q4_matvec_decode, q8_matvec_decode
+from ops.quantized_kv_cache_ops import QuantizedKVCacheConfig, quantize_kv_cache, quantized_kv_gqa_decode_attention
 from ops.quantized_decode_block_ops import paged_quantized_decode_block, quantized_decode_block
 from ops.rope_ops import apply_rope
 from ops.sparse_attention_ops import SparseAttentionPattern, sparse_gqa_attention, sparse_gqa_decode_attention
@@ -825,6 +826,39 @@ def _kv_offload_tier_cases(results, dtype, dtype_name, quick, iters, fail_fast):
         )
 
 
+def _quantized_kv_decode_attention_cases(results, dtype, dtype_name, quick, iters, fail_fast):
+    if quick:
+        shapes = [{"bits": 8, "B": 1, "MAX_S": 32, "length": 32, "Hq": 4, "Hkv": 2, "D": 16, "group_size": 16}]
+    else:
+        shapes = [
+            {"bits": 8, "B": 1, "MAX_S": 4096, "length": 4096, "Hq": 32, "Hkv": 8, "D": 128, "group_size": 32},
+            {"bits": 4, "B": 1, "MAX_S": 4096, "length": 4096, "Hq": 32, "Hkv": 8, "D": 128, "group_size": 32},
+        ]
+    backends = ["reference", "metal_q8", "metal_q4"]
+    for shape in shapes:
+        B, MAX_S, length, Hq, Hkv, D = shape["B"], shape["MAX_S"], shape["length"], shape["Hq"], shape["Hkv"], shape["D"]
+        bits, group_size = shape["bits"], shape["group_size"]
+        q = mx.random.normal((B, 1, Hq, D)).astype(dtype)
+        K_cache = mx.random.normal((B, MAX_S, Hkv, D)).astype(dtype)
+        V_cache = mx.random.normal((B, MAX_S, Hkv, D)).astype(dtype)
+        qkv = quantize_kv_cache(K_cache, V_cache, QuantizedKVCacheConfig(bits=bits, group_size=group_size))
+        for backend in backends:
+            if backend == "metal_q8" and bits != 8:
+                _skip(results, "quantized_kv_decode_attention", f"q{bits}_decode_attention", backend, dtype_name, shape, "bits mismatch")
+                continue
+            if backend == "metal_q4" and bits != 4:
+                _skip(results, "quantized_kv_decode_attention", f"q{bits}_decode_attention", backend, dtype_name, shape, "bits mismatch")
+                continue
+            if D > 128 and backend != "reference":
+                _skip(results, "quantized_kv_decode_attention", f"q{bits}_decode_attention", backend, dtype_name, shape, "D > 128 not supported")
+                continue
+            _run(results, "quantized_kv_decode_attention", f"q{bits}_decode_attention", backend, dtype_name, shape,
+                 lambda b=backend, qq=q, qqkv=qkv, ll=length: time_fn(
+                     lambda: quantized_kv_gqa_decode_attention(qq, qqkv, lengths=ll, backend=b),
+                     warmup=3, iters=iters,
+                 ), fail_fast)
+
+
 def _speculative_decoding_cases(results, dtype, dtype_name, quick, iters, fail_fast):
     if quick:
         shapes = [{"prompt_tokens": 4, "max_new_tokens": 4, "draft_length": 2}]
@@ -922,6 +956,7 @@ def main():
     _tiny_generation_pipeline_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _prefix_cache_reuse_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _kv_offload_tier_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
+    _quantized_kv_decode_attention_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
     _speculative_decoding_cases(results, dtype, args.dtype, quick, iters, args.fail_fast)
 
     payload = {

@@ -41,8 +41,8 @@ This repo is evolving as an experimental Apple Silicon MLX/Metal kernel lab for 
 - [x] Sparse and sliding-window GQA attention kernels
 - [x] Prefix KV-cache reuse and cache matching
 - [x] Speculative decoding / MTP scaffold
-- [ ] Flash/NAND KV offload tier
-- [ ] Quantized KV-cache attention
+- [x] Flash/NAND KV offload tier
+- [x] Quantized KV-cache attention
 
 ## Development pattern
 
@@ -297,8 +297,29 @@ The intended workflow for each new primitive is:
 
 ### v0.40 quantized KV-cache attention
 
-- extend sparse and decode experiments toward quantized KV-cache reads
-- keep accuracy, layout, and bandwidth tradeoffs explicit
+- [x] QuantizedKVCacheConfig with validation (bits 4/8, group_size, symmetric)
+- [x] QuantizedKVCache dataclass with shapes/validate/memory_bytes/compression_ratio
+- [x] quantize_kv_cache for q8 and q4 (per-token/head/group symmetric quantization)
+- [x] dequantize_kv_cache roundtrip
+- [x] quantized_kv_error metrics (RMSE, max abs, compression ratio)
+- [x] reference_quantized_kv_gqa_decode_attention — dequantize + GQA decode
+- [x] quantized_kv_gqa_decode_attention with "reference", "metal_q8", "metal_q4" backends
+- [x] Metal q8 GQA decode attention kernel (one thread per Q head, online softmax, per-group dequant)
+- [x] Metal q4 GQA decode attention kernel (nibble unpack, per-group dequant)
+- [x] reference_quantized_kv_sparse_gqa_decode_attention — sparse + quantized reference
+- [x] Test coverage: quantization ops (10), reference decode (9), Metal decode (11), sparse (3)
+- [x] Benchmark scaffold and examples
+- [x] Documentation and roadmap update
+
+### v0.41
+
+- Sparse + prefix-cache + offload integration
+- Parallel speculative verification kernel
+
+### v0.42
+
+- Async KV prefetch scheduler
+- Paged quantized KV-cache
 
 ## Long-term goal
 
