@@ -18,6 +18,21 @@ _Q4_GQA_DECODE_KERNEL = KERNEL_DIR / "q4_gqa_decode_attention.metal"
 _MAX_HEAD_DIM = 128
 
 
+def _dtype_itemsize(dtype: Any) -> int:
+    dtype_str = str(dtype)
+    if "bool" in dtype_str:
+        return 1
+    if "uint8" in dtype_str or "int8" in dtype_str:
+        return 1
+    if "uint16" in dtype_str or "int16" in dtype_str or "float16" in dtype_str or "bfloat16" in dtype_str:
+        return 2
+    if "uint32" in dtype_str or "int32" in dtype_str or "float32" in dtype_str:
+        return 4
+    if "uint64" in dtype_str or "int64" in dtype_str or "float64" in dtype_str:
+        return 8
+    raise ValueError(f"Unsupported dtype for byte-size estimation: {dtype}")
+
+
 # ---------------------------------------------------------------------------
 # Config
 # ---------------------------------------------------------------------------
@@ -90,11 +105,11 @@ class QuantizedKVCache:
     def memory_bytes(self) -> int:
         total = 0
         for arr in (self.k_q, self.v_q, self.k_scales, self.v_scales):
-            total += arr.size * arr.dtype.itemsize
+            total += arr.size * _dtype_itemsize(arr.dtype)
         if self.k_zeros is not None:
-            total += self.k_zeros.size * self.k_zeros.dtype.itemsize
+            total += self.k_zeros.size * _dtype_itemsize(self.k_zeros.dtype)
         if self.v_zeros is not None:
-            total += self.v_zeros.size * self.v_zeros.dtype.itemsize
+            total += self.v_zeros.size * _dtype_itemsize(self.v_zeros.dtype)
         return total
 
     def compression_ratio(self, fp_bytes_per_value: int = 2) -> float | None:
@@ -196,7 +211,7 @@ def quantize_kv_cache(
                         group_vals = chunk[g_start:g_end]
                         q_u, sc = _quantize_group_symmetric_8(group_vals.reshape(1, -1))
                         k_q_flat[b, s, h, g_start:g_end] = q_u.reshape(-1)
-                        k_scales[b, s, h, g] = sc.reshape(-1).astype(mx.float16)
+                        k_scales[b, s, h, g] = sc.reshape(()).astype(mx.float16)
 
                     chunk_v = Vf[b, s, h, :]
                     for g in range(groups_per_head):
@@ -205,7 +220,7 @@ def quantize_kv_cache(
                         group_vals = chunk_v[g_start:g_end]
                         q_u, sc = _quantize_group_symmetric_8(group_vals.reshape(1, -1))
                         v_q_flat[b, s, h, g_start:g_end] = q_u.reshape(-1)
-                        v_scales[b, s, h, g] = sc.reshape(-1).astype(mx.float16)
+                        v_scales[b, s, h, g] = sc.reshape(()).astype(mx.float16)
 
         return QuantizedKVCache(
             k_q=k_q_flat, v_q=v_q_flat,
@@ -235,7 +250,7 @@ def quantize_kv_cache(
                         group_vals = chunk[g_start:g_end]
                         q_u, sc = _quantize_group_symmetric_4(group_vals.reshape(1, -1))
                         group_q[g_start:g_end] = q_u.reshape(-1)
-                        k_scales[b, s, h, g] = sc.reshape(-1).astype(mx.float16)
+                        k_scales[b, s, h, g] = sc.reshape(()).astype(mx.float16)
                     packed = pack_q4(group_q.reshape(1, D))
                     k_q_flat[b, s, h, :] = packed.reshape(-1)
 
@@ -247,7 +262,7 @@ def quantize_kv_cache(
                         group_vals = chunk_v[g_start:g_end]
                         q_u, sc = _quantize_group_symmetric_4(group_vals.reshape(1, -1))
                         group_q[g_start:g_end] = q_u.reshape(-1)
-                        v_scales[b, s, h, g] = sc.reshape(-1).astype(mx.float16)
+                        v_scales[b, s, h, g] = sc.reshape(()).astype(mx.float16)
                     packed = pack_q4(group_q.reshape(1, D))
                     v_q_flat[b, s, h, :] = packed.reshape(-1)
 
